@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Expense Ingest Tracker</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>Expense Ingest Tracker</h1>
+        <p class="sub">Type a WhatsApp/SMS-style message and it’ll add an expense.</p>
+      </header>
+
+      <section class="card">
+        <form id="ingestForm" class="form">
+          <label for="text">Message</label>
+          <input
+            id="text"
+            name="text"
+            type="text"
+            autocomplete="off"
+            placeholder="e.g. food 250 chai"
+            required
+          />
+          <div class="row">
+            <input id="from" name="from" type="text" placeholder="from (optional)" />
+            <button type="submit">Add</button>
+          </div>
+          <p id="status" class="status"></p>
+        </form>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Summary</h2>
+          <div class="filters">
+            <button class="chip" data-range="week" type="button">Week</button>
+            <button class="chip active" data-range="month" type="button">Month</button>
+            <button class="chip" data-range="year" type="button">Year</button>
+            <button class="chip" data-range="all" type="button">All</button>
+          </div>
+          <div class="summary">
+            <div>
+              <div class="metric" id="weekTotal">—</div>
+              <div class="label">This week</div>
+            </div>
+            <div>
+              <div class="metric" id="monthTotal">—</div>
+              <div class="label">This month</div>
+            </div>
+            <div>
+              <div class="metric" id="ytdTotal">—</div>
+              <div class="label">Year to date</div>
+            </div>
+            <div>
+              <div class="metric" id="allTotal">—</div>
+              <div class="label">All time</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Recent expenses</h2>
+          <div id="expenses" class="expenses"></div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <small>
+          Tip: try <code>spent 250 chai</code>, <code>usd 12.50 coffee</code>, <code>rent 1200 2026-02-01</code>, <code>₹1,250 groceries yesterday</code>.
+        </small>
+      </footer>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

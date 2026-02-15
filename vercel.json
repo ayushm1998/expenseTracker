@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "installCommand": "npm install",
+  "buildCommand": "npm run build:client",
+  "outputDirectory": "dist-client",
+  "functions": {
+    "api/index.ts": {
+      "runtime": "nodejs20.x"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.ts" },
+    { "source": "/webhook/(.*)", "destination": "/api/index.ts" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

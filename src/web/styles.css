@@ -1,0 +1,74 @@
+:root{
+  --bg:#0b1020;
+  --card:#121a33;
+  --text:#e7ecff;
+  --muted:#aab4e6;
+  --accent:#7c5cff;
+  --border:rgba(255,255,255,.08);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  background: radial-gradient(1200px 700px at 20% 10%, #1f2a63 0%, var(--bg) 55%);
+  color:var(--text);
+}
+.container{max-width:980px;margin:0 auto;padding:28px}
+.header h1{margin:0 0 6px;font-weight:800;letter-spacing:.2px}
+.sub{margin:0;color:var(--muted)}
+.card{
+  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:16px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+@media (max-width: 860px){.grid{grid-template-columns:1fr}}
+.form label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+.form input{
+  width:100%;
+  padding:12px 12px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.25);
+  color:var(--text);
+  outline:none;
+}
+.form input:focus{border-color:rgba(124,92,255,.7)}
+.row{display:flex;gap:10px;margin-top:10px}
+.row input{flex:1}
+button{
+  padding:12px 14px;
+  border-radius:12px;
+  border:1px solid rgba(124,92,255,.7);
+  background:rgba(124,92,255,.2);
+  color:var(--text);
+  font-weight:700;
+  cursor:pointer;
+}
+button:hover{background:rgba(124,92,255,.35)}
+.status{min-height:18px;margin:.6rem 0 0;color:var(--muted)}
+.status.ok{color:#97ffce}
+.status.error{color:#ff9db5}
+.summary{display:flex;gap:26px}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 12px}
+.chip{
+  padding:8px 10px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.18);
+  color:var(--text);
+  font-weight:750;
+  cursor:pointer;
+}
+.chip.active{border-color:rgba(124,92,255,.8);background:rgba(124,92,255,.18)}
+.metric{font-size:28px;font-weight:850;letter-spacing:.2px}
+.label{color:var(--muted);font-size:12px;margin-top:4px}
+.expenses{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow:auto;padding-right:4px}
+.expense{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:12px;border-radius:14px;border:1px solid var(--border);background:rgba(0,0,0,.18)}
+.expense .title{font-weight:800}
+.expense .meta{color:var(--muted);font-size:12px;margin-top:4px;line-height:1.3}
+.amount{font-weight:900;white-space:nowrap}
+.footer{margin-top:18px;color:var(--muted)}
+code{background:rgba(0,0,0,.25);padding:3px 6px;border-radius:8px;border:1px solid var(--border)}

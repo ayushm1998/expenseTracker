@@ -1,0 +1,209 @@
+:root{
+  --bg:#0b1020;
+  --card:#121a33;
+  --text:#e7ecff;
+  --muted:#aab4e6;
+  --accent:#7c5cff;
+  --border:rgba(255,255,255,.08);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  background: radial-gradient(1200px 700px at 20% 10%, #1f2a63 0%, var(--bg) 55%);
+  color:var(--text);
+}
+.container{max-width:980px;margin:0 auto;padding:28px}
+.header h1{margin:0 0 6px;font-weight:800;letter-spacing:.2px}
+.sub{margin:0;color:var(--muted)}
+.card{
+  background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:16px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.card-head h2{margin:0}
+.card-head-right{display:flex;align-items:center;gap:10px}
+.card-head select{
+  width:auto;
+  padding:8px 10px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.18);
+  color:var(--text);
+  outline:none;
+  font-weight:750;
+}
+.card-head select:focus{border-color:rgba(124,92,255,.7)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.span-2{grid-column:1 / -1}
+@media (max-width: 860px){.grid{grid-template-columns:1fr}}
+.form label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+.form input{
+  width:100%;
+  padding:12px 12px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.25);
+  color:var(--text);
+  outline:none;
+}
+.form select{
+  width:100%;
+  padding:12px 12px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.25);
+  color:var(--text);
+  outline:none;
+  appearance:none;
+  -webkit-appearance:none;
+  -moz-appearance:none;
+  padding-right:38px;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24'%3E%3Cpath fill='%23aab4e6' d='M7 10l5 5l5-5z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 12px center;
+  background-size:14px 14px;
+}
+.form input:focus{border-color:rgba(124,92,255,.7)}
+.form select:focus{border-color:rgba(124,92,255,.7)}
+.row{display:flex;gap:10px;margin-top:10px}
+.row input{flex:1}
+/* The ingest rows have many controls; allow wrapping so toggles don't distort */
+#ingestForm .row{flex-wrap:wrap;align-items:center}
+
+/* Let toggle groups keep their shape; avoid squishing that causes text to drop */
+.toggle-group{flex:0 1 auto;min-width:260px}
+.toggle{min-width:140px}
+
+/* Wider conditional name inputs (for "Other" person fields) */
+.grow{flex:2 1 260px;min-width:260px}
+/* When the ingest controls are split into multiple rows, keep each row visually consistent */
+#ingestForm .row + .row {
+  padding-top: 0;
+}
+
+/* Settings (configure tab) */
+.cfg-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:8px 10px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;
+  background:rgba(255,255,255,.03);
+  margin-bottom:8px;
+}
+.cfg-item .cfg-del{
+  padding:6px 10px;
+  font-size:12px;
+}
+
+.actions{display:flex;gap:8px;align-items:center}
+.chip{border:1px solid rgba(231,236,255,.14);background:rgba(255,255,255,.06);color:rgba(231,236,255,.92);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer}
+.chip:hover{background:rgba(255,255,255,.1)}
+.chip.danger{border-color:rgba(225,29,72,.4);background:rgba(225,29,72,.12)}
+.chip.danger:hover{background:rgba(225,29,72,.2)}
+button{
+  padding:12px 14px;
+  border-radius:12px;
+  border:1px solid rgba(124,92,255,.7);
+  background:rgba(124,92,255,.2);
+  color:var(--text);
+  font-weight:700;
+  cursor:pointer;
+}
+button:hover{background:rgba(124,92,255,.35)}
+.status{min-height:18px;margin:.6rem 0 0;color:var(--muted)}
+.status.ok{color:#97ffce}
+.status.error{color:#ff9db5}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 12px}
+.filters-inline{display:flex;align-items:center}
+.filters-inline input[type="month"]{
+  height:34px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.18);
+  color:var(--text);
+  outline:none;
+  font-weight:750;
+}
+.filters-inline input[type="month"]:focus{border-color:rgba(124,92,255,.8)}
+.filters-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:8px 0 0}
+.filters-row input[type="date"]{height:38px}
+.inline{display:flex;align-items:center;gap:8px}
+.inline span{font-size:12px;color:rgba(231,236,255,.75)}
+
+/* Pill toggles used in the ingest row (cleaner than raw checkboxes) */
+.toggle-group{display:flex;align-items:center;gap:8px}
+.toggle{position:relative;display:flex;align-items:center;gap:10px;padding:10px 13px;border-radius:999px;border:1px solid var(--border);background:rgba(0,0,0,.18);cursor:pointer;user-select:none;white-space:nowrap;line-height:1;flex-wrap:nowrap}
+.toggle:hover{background:rgba(255,255,255,.06)}
+.toggle input{position:absolute;opacity:0;pointer-events:none}
+.toggle-ui{width:20px;height:20px;border-radius:8px;border:1px solid var(--border);background:rgba(0,0,0,.22);position:relative;flex:0 0 20px;display:grid;place-items:center}
+.toggle-ui:after{content:"";width:5px;height:10px;border-right:2px solid transparent;border-bottom:2px solid transparent;transform:rotate(45deg) translateY(-1px);transition:border-color .15s ease}
+.toggle-text{font-size:12px;font-weight:800;color:rgba(231,236,255,.9);display:block;white-space:nowrap;flex:0 0 auto;transform:translateY(0.5px)}
+.toggle input:checked + .toggle-ui{border-color:rgba(124,92,255,.85);background:rgba(124,92,255,.18)}
+.toggle input:checked + .toggle-ui:after{border-color:rgba(255,255,255,.92)}
+
+/* Force marker + label text to stay on one line inside the pill */
+.toggle{white-space:nowrap;overflow:hidden}
+.toggle-ui,.toggle-text{white-space:nowrap}
+
+/* Disabled visual state for split controls when “100% for someone” is used */
+.muted-disabled{opacity:.5;filter:saturate(.7)}
+.muted-disabled *{pointer-events:none}
+.chip{
+  padding:8px 10px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.18);
+  color:var(--text);
+  font-weight:750;
+  cursor:pointer;
+}
+.chip.active{border-color:rgba(124,92,255,.8);background:rgba(124,92,255,.18)}
+.summary{display:flex;gap:26px;flex-wrap:wrap}
+.metric{font-size:28px;font-weight:850;letter-spacing:.2px}
+.label{color:var(--muted);font-size:12px;margin-top:4px}
+.expenses{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow:auto;padding-right:4px}
+.expense{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:12px;border-radius:14px;border:1px solid var(--border);background:rgba(0,0,0,.18)}
+.expense .title{font-weight:800}
+.expense .meta{color:var(--muted);font-size:12px;margin-top:4px;line-height:1.3}
+.amount{font-weight:900;white-space:nowrap}
+.expense .left{flex:1;min-width:0}
+.expense .actions{flex:0 0 auto}
+.expense .meta{word-break:break-word}
+
+.modal{position:fixed;inset:0;display:none;z-index:50}
+.modal.open{display:block}
+.modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter: blur(3px)}
+.modal-card{position:relative;z-index:51;max-width:720px;margin:6vh auto 0;background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04));border:1px solid var(--border);border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.45);overflow:hidden}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.modal-title{font-weight:900}
+.icon-btn{width:36px;height:36px;border-radius:12px;border:1px solid var(--border);background:rgba(0,0,0,.18);color:var(--text);cursor:pointer;font-size:18px;line-height:1}
+.icon-btn:hover{background:rgba(255,255,255,.08)}
+.modal-body{padding:16px}
+.modal-body label{display:block;font-size:12px;color:var(--muted);margin:6px 0}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 16px;border-top:1px solid var(--border)}
+.btn-secondary{border:1px solid var(--border);background:rgba(0,0,0,.18)}
+.btn-secondary:hover{background:rgba(255,255,255,.08)}
+.preview{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.22);border:1px solid var(--border);border-radius:14px;padding:12px;color:rgba(231,236,255,.92);font-size:12px;line-height:1.35;margin:0}
+.chart{margin-top:8px;border:1px solid var(--border);border-radius:14px;padding:10px;background:rgba(0,0,0,.12)}
+.pie-wrap{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.share-pie .pie-wrap{flex-wrap:nowrap;align-items:center}
+.share-pie{overflow-x:auto}
+.share-pie .legend{min-width:220px}
+.legend{display:flex;flex-direction:column;gap:8px;min-width:220px}
+.legend-row{display:flex;align-items:center;gap:10px}
+.legend-dot{width:10px;height:10px;border-radius:999px;display:inline-block;flex:0 0 auto}
+.legend-name{font-weight:800}
+.legend-val{margin-left:auto;color:var(--muted);font-variant-numeric: tabular-nums;}
+.chart-legend{margin-top:6px;color:var(--muted)}
+.muted{color:var(--muted)}
+.footer{margin-top:18px;color:var(--muted)}
+code{background:rgba(0,0,0,.25);padding:3px 6px;border-radius:8px;border:1px solid var(--border)}
