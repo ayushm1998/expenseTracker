@@ -5,7 +5,7 @@
   "outputDirectory": "dist-client",
   "functions": {
     "api/index.ts": {
-      "runtime": "nodejs20.x"
+      "runtime": "@vercel/node@3.2.22"
     }
   },
   "rewrites": [
