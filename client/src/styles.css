@@ -119,6 +119,17 @@ body{
 
 /* Wider conditional name inputs (for "Other" person fields) */
 .grow{flex:2 1 260px;min-width:260px}
+
+/* Expense ingest: on narrow screens, allow inputs to shrink instead of overflowing */
+@media (max-width: 520px){
+  /* Remove hard minimums that cause date/card to spill outside */
+  .toggle-group{min-width:0}
+  .toggle{min-width:0}
+  .grow{min-width:0}
+
+  /* Make the first row (date + card) stack and fill */
+  #occurredOn, #card{width:100%}
+}
 /* When the ingest controls are split into multiple rows, keep each row visually consistent */
 #ingestForm .row + .row {
   padding-top: 0;
