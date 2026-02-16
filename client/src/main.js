@@ -263,6 +263,23 @@ let selectedRange = 'month';
 // For the Month view, allow choosing any month.
 let selectedMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
 
+// Expenses tab: independent month picker (so Expenses isn't tied to Summary's month/range).
+let expensesMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+let expensesMonthMode = 'all'; // 'all' | 'month'
+
+function expensesMonthToQuery() {
+  if (expensesMonthMode !== 'month') return {};
+  const [yStr, mStr] = String(expensesMonth || '').split('-');
+  const y = Number(yStr);
+  const m = Number(mStr);
+  if (!y || !m) return {};
+
+  const from = `${yStr}-${String(m).padStart(2, '0')}-01`;
+  const next = new Date(y, m, 1);
+  const to = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+  return { from, to };
+}
+
 // For the Custom view, user provides a date range.
 let customFrom = '';
 let customTo = '';
@@ -728,6 +745,11 @@ function renderShell() {
           <div class="card-head">
             <h2>Expenses</h2>
             <div class="card-head-right">
+              <select id="expensesMonthMode" aria-label="Expenses range">
+                <option value="all">All time</option>
+                <option value="month">Month</option>
+              </select>
+              <input id="expensesMonth" name="expensesMonth" type="month" aria-label="Expenses month" style="display:none;" />
               <select id="cardFilter" name="cardFilter" aria-label="Filter by card">
               <option value="">All cards</option>
               <option value="amex">Amex</option>
@@ -911,10 +933,11 @@ async function refresh() {
   const summary = await fetchJson('/api/summary');
   const q = rangeToQuery(selectedRange);
   const cardFilter = document.getElementById('cardFilter')?.value || '';
+  const expQ = expensesMonthToQuery();
   const query = new URLSearchParams({
     limit: '200',
-    ...(q.from ? { from: q.from } : {}),
-    ...(q.to ? { to: q.to } : {}),
+    ...(expQ.from ? { from: expQ.from } : {}),
+    ...(expQ.to ? { to: expQ.to } : {}),
     ...(cardFilter ? { card: cardFilter } : {}),
   });
   const expenses = await fetchJson(`/api/expenses?${query.toString()}`);
@@ -1275,6 +1298,33 @@ function wireEvents() {
     monthEl.addEventListener('change', async () => {
       selectedMonth = monthEl.value;
       if (selectedRange === 'month') await refresh();
+    });
+  }
+
+  // Expenses tab: independent month controls
+  const expensesMonthModeEl = document.getElementById('expensesMonthMode');
+  const expensesMonthEl = document.getElementById('expensesMonth');
+  const syncExpensesMonthUi = async () => {
+    if (expensesMonthModeEl) expensesMonthModeEl.value = expensesMonthMode;
+    if (expensesMonthEl) {
+      expensesMonthEl.value = expensesMonth;
+      expensesMonthEl.style.display = expensesMonthMode === 'month' ? 'block' : 'none';
+    }
+    await refresh();
+  };
+  if (expensesMonthModeEl) {
+    expensesMonthModeEl.value = expensesMonthMode;
+    expensesMonthModeEl.addEventListener('change', async () => {
+      expensesMonthMode = expensesMonthModeEl.value === 'month' ? 'month' : 'all';
+      await syncExpensesMonthUi();
+    });
+  }
+  if (expensesMonthEl) {
+    expensesMonthEl.value = expensesMonth;
+    expensesMonthEl.style.display = expensesMonthMode === 'month' ? 'block' : 'none';
+    expensesMonthEl.addEventListener('change', async () => {
+      expensesMonth = expensesMonthEl.value;
+      if (expensesMonthMode === 'month') await refresh();
     });
   }
 
