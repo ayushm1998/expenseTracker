@@ -1160,9 +1160,17 @@ async function refresh() {
 
     const amt = document.createElement('div');
     amt.className = 'amount';
-    // In the Expenses list, always show the full paid amount.
-    // Any split reimbursement is tracked separately under Reimbursements.
-    amt.textContent = formatMoney(e.currency || currency, Number(e.amount));
+    // Expenses list (option 2): show *my share* as the primary number when split.
+    // The full amount is still stored as e.amount and is shown as muted context.
+    const fullAmount = Number(e.amount ?? 0);
+    const myAmount = Number(e.myAmount ?? e.amount ?? 0);
+    const isSplit = Boolean(e.splitType && String(e.splitType) !== 'none');
+    if (isSplit) {
+      const cur = e.currency || currency;
+      amt.innerHTML = `${formatMoney(cur, myAmount)}<div class="muted" style="font-size:12px;line-height:1.2;margin-top:2px;">total ${formatMoney(cur, fullAmount)}</div>`;
+    } else {
+      amt.textContent = formatMoney(e.currency || currency, fullAmount);
+    }
 
     const actions = document.createElement('div');
     actions.className = 'actions';
