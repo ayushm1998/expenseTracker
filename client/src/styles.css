@@ -27,7 +27,7 @@ body{
 }
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .card-head h2{margin:0}
-.card-head-right{display:flex;align-items:center;gap:10px}
+.card-head-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
 .card-head select{
   width:auto;
   padding:8px 10px;
@@ -38,6 +38,8 @@ body{
   outline:none;
   font-weight:750;
 }
+.card-head-right > *{min-width:0}
+.card-head-right select{max-width:100%}
 .card-head select:focus{border-color:rgba(124,92,255,.7)}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
 .span-2{grid-column:1 / -1}
