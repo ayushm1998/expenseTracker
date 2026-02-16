@@ -14,6 +14,7 @@ body{
   background: radial-gradient(1200px 700px at 20% 10%, #1f2a63 0%, var(--bg) 55%);
   color:var(--text);
 }
+.card, .container{max-width:100%}
 .container{max-width:980px;margin:0 auto;padding:28px}
 .header h1{margin:0 0 6px;font-weight:800;letter-spacing:.2px}
 .sub{margin:0;color:var(--muted)}
@@ -103,6 +104,14 @@ body{
   background-position:right 12px center;
   background-size:14px 14px;
 }
+
+/* Normalize control sizing across iOS (date/select/input/button) */
+.form input,
+.form select,
+button{
+  min-height:44px;
+  line-height:1.2;
+}
 .form input:focus{border-color:rgba(124,92,255,.7)}
 .form select:focus{border-color:rgba(124,92,255,.7)}
 .row{display:flex;gap:10px;margin-top:10px}
@@ -112,6 +121,10 @@ body{
 
 /* Prevent flex children from overflowing their container (common on iOS Safari) */
 .row > *{min-width:0}
+
+/* Ensure rows never cause horizontal scrolling */
+.container{overflow-x:hidden}
+.card{overflow:hidden}
 
 /* Let toggle groups keep their shape; avoid squishing that causes text to drop */
 .toggle-group{flex:0 1 auto;min-width:260px}
@@ -146,6 +159,10 @@ body{
     max-width:100%;
     min-width:0;
   }
+
+  /* Make toggles feel aligned (same height as inputs) */
+  .toggle{min-height:44px}
+  .toggle-ui{width:22px;height:22px;flex:0 0 22px}
 }
 /* When the ingest controls are split into multiple rows, keep each row visually consistent */
 #ingestForm .row + .row {
