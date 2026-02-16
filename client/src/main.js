@@ -727,6 +727,7 @@ function renderShell() {
             </label>
             <select id="splitWith" name="splitWith" aria-label="Split with" style="display:none;">
               <option value="">With…</option>
+              <option value="me">With me</option>
               <option value="other">With someone else</option>
             </select>
             <input id="splitWithName" name="splitWithName" type="text" placeholder="Who are you splitting with?" class="grow" style="display:none;" />
@@ -1553,6 +1554,17 @@ function wireEvents() {
     if (paidByEl) {
       paidByEl.onchange = () => {
         updatePaidByUi();
+
+        // UX: if someone else paid, default to splitting it with me.
+        // This makes reimbursements/"I owe" work without extra clicks.
+        const isRoommatePaid = String(paidByEl.value) === 'roommate';
+        const splitEl = document.getElementById('split');
+        const splitWithEl = document.getElementById('splitWith');
+        if (isRoommatePaid && splitEl && splitWithEl) {
+          splitEl.checked = true;
+          splitWithEl.style.display = 'block';
+          splitWithEl.value = 'me';
+        }
       };
       updatePaidByUi();
     }
@@ -1749,7 +1761,16 @@ function wireEvents() {
     }
 
     if (split) {
-      if (splitWith && splitWith !== 'other') metaParts.push(`other:${nicePersonLabel(splitWith)}`);
+      if (splitWith && splitWith !== 'other') {
+        if (splitWith === 'me') {
+          // Special-case: "split with me" means split with the paying roommate.
+          // Encode the roommate name as the counterparty so reimbursements work.
+          const paidByRoommateName = String(document.getElementById('paidByRoommateName')?.value || '').trim();
+          if (paidByRoommateName) metaParts.push(`other:${nicePersonLabel(paidByRoommateName)}`);
+        } else {
+          metaParts.push(`other:${nicePersonLabel(splitWith)}`);
+        }
+      }
       else if (splitWith === 'other' && splitWithName) metaParts.push(`other:${nicePersonLabel(splitWithName)}`);
 
       // Allow adding multiple people; emit repeated other:<name> tokens for max compatibility.

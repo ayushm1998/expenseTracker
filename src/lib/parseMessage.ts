@@ -39,6 +39,9 @@ const CATEGORY_WORDS = new Set([
   'dining',
   'restaurant',
 
+  // Grocery (explicit category keyword only; amount-first messages remain notes)
+  'grocery',
+
   // Housing
   'rent',
   'housing',
@@ -101,6 +104,9 @@ const CATEGORY_WORDS = new Set([
 function normalizeCategory(cat: string): string {
   const c = String(cat || '').trim().toLowerCase();
   if (!c) return c;
+
+  // Grocery synonyms
+  if (c === 'groceries') return 'grocery';
 
   // Housing
   if (c === 'mortgage') return 'housing';
