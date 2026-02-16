@@ -136,6 +136,16 @@ body{
     width:100%;
     flex:1 1 auto;
   }
+
+  /* Date inputs are the main offender on iOS Safari: force them to respect container width */
+  #ingestForm input[type="date"],
+  #ledgerForm input[type="date"],
+  #customRange input[type="date"]{
+    box-sizing:border-box;
+    display:block;
+    max-width:100%;
+    min-width:0;
+  }
 }
 /* When the ingest controls are split into multiple rows, keep each row visually consistent */
 #ingestForm .row + .row {
