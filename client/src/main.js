@@ -28,10 +28,11 @@ function buildEditTextFromForm(baseText, opts) {
   const tokens = [];
   if (opts?.card) tokens.push(`card:${opts.card}`);
   if (opts?.paidBy === 'me') tokens.push('paidby:me');
-  if (opts?.paidBy === 'roommate') tokens.push('paidby:roommate');
-  // Simplified: Vyas is the only roommate/counterparty for reimbursements.
-  // We always encode other:vyas when paidby:roommate so reimbursements attribute correctly.
-  if (opts?.paidBy === 'roommate') tokens.push('other:vyas');
+  if (opts?.paidBy === 'roommate') {
+    tokens.push('paidby:roommate');
+    // If roommate is selected, encode who it was as other:<name> when we know it.
+    if (opts?.paidByRoommateName) tokens.push(`other:${opts.paidByRoommateName}`);
+  }
 
   if (opts?.splitOn) {
     if (opts?.splitType === 'ratio' && opts?.splitRatio) {
@@ -41,8 +42,8 @@ function buildEditTextFromForm(baseText, opts) {
     }
 
     // Primary person
-    if (opts?.splitWith === 'vyas') {
-      tokens.push('other:vyas');
+    if (opts?.splitWith && opts?.splitWith !== 'other') {
+      tokens.push(`other:${opts.splitWith}`);
     } else if (opts?.splitWith === 'other' && opts?.splitWithName) {
       tokens.push(`other:${opts.splitWithName}`);
     }
@@ -107,8 +108,9 @@ function openExpenseEditor(expense, { onSave } = {}) {
   splitRatioEl.value = '';
 
   // We only store the primary party on the expense row.
-  splitWithEl.value = expense.otherParty && expense.otherParty !== 'vyas' ? 'other' : 'vyas';
-  splitWithNameEl.value = splitWithEl.value === 'other' ? expense.otherParty || '' : '';
+  // If otherParty exists, use the explicit name field; otherwise leave it blank.
+  splitWithEl.value = expense.otherParty ? 'other' : '';
+  splitWithNameEl.value = expense.otherParty || '';
   splitWithMoreEl.value = '';
 
   const toggleSplit = () => {
@@ -346,7 +348,7 @@ function getRecentPeople() {
 
 function getConfig() {
   const defaults = {
-    roommates: ['Vyas'],
+    roommates: [],
     paymentMethods: ['Amex', 'Citi', 'Apple Card', 'BofA', 'BoFA Debit', 'Chase', 'Zolve', 'Cash'],
   };
   try {
@@ -429,8 +431,26 @@ function setPersonSelectOptions(selectEl, people) {
   }
 }
 
+function setRoommateSelectOptions(selectEl, roommates) {
+  if (!selectEl) return;
+  const keep = new Set(['', 'other']);
+  for (const opt of Array.from(selectEl.querySelectorAll('option'))) {
+    if (!keep.has(opt.value)) opt.remove();
+  }
+  const existingVals = new Set(Array.from(selectEl.querySelectorAll('option')).map((o) => o.value));
+  for (const r of roommates || []) {
+    const val = nicePersonLabel(r);
+    if (!val || existingVals.has(val) || val === 'Someone') continue;
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = val;
+    selectEl.appendChild(opt);
+    existingVals.add(val);
+  }
+}
+
 async function deleteExpense(id) {
-  return fetchJsonOrThrow(`/api/expenses/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  splitWithEl.value = expense.otherParty ? 'other' : '';
 }
 
 async function updateExpense(id, payload) {
@@ -659,7 +679,11 @@ function renderShell() {
           <div class="row" style="margin-top:8px;">
             <select id="paidBy" name="paidBy" aria-label="Paid by">
               <option value="me">I paid</option>
-              <option value="roommate">Vyas paid</option>
+              <option value="roommate">Roommate paid</option>
+            </select>
+
+            <select id="paidByRoommateName" name="paidByRoommateName" aria-label="Which roommate?" style="display:none;">
+              <option value="">Which roommate?</option>
             </select>
 
             <div class="toggle-group" id="forOtherGroup">
@@ -683,7 +707,7 @@ function renderShell() {
               <span class="toggle-text">Split</span>
             </label>
             <select id="splitWith" name="splitWith" aria-label="Split with" style="display:none;">
-              <option value="vyas">With Vyas</option>
+              <option value="">With…</option>
               <option value="other">With someone else</option>
             </select>
             <input id="splitWithName" name="splitWithName" type="text" placeholder="Who are you splitting with?" class="grow" style="display:none;" />
@@ -844,7 +868,7 @@ function renderShell() {
             <div class="row" style="margin-top:8px;">
               <select id="editPaidBy" aria-label="Paid by">
                 <option value="me">I paid</option>
-                <option value="roommate">Vyas paid</option>
+                <option value="roommate">Roommate paid</option>
               </select>
               <label class="inline" style="gap:10px;">
                 <span>Split?</span>
@@ -859,7 +883,7 @@ function renderShell() {
               </select>
               <input id="editSplitRatio" type="text" placeholder="e.g. 2/1" style="display:none;" />
               <select id="editSplitWith" aria-label="Split with" style="display:none;">
-                <option value="vyas">With Vyas</option>
+                <option value="">With…</option>
                 <option value="other">With someone else</option>
               </select>
               <input id="editSplitWithName" type="text" placeholder="Who are you splitting with?" class="grow" style="display:none;" />
@@ -1005,9 +1029,9 @@ async function refresh() {
   const reimbEl = document.getElementById('reimb');
   if (reimbEl && reimbSummary) {
     const net = Number(reimbSummary.net || 0);
-    if (net > 0) reimbEl.textContent = `Vyas owes you ${formatMoney(currency, net)} (net)`;
-    else if (net < 0) reimbEl.textContent = `You owe Vyas ${formatMoney(currency, Math.abs(net))} (net)`;
-    else reimbEl.textContent = `Vyas balance settled (net ${formatMoney(currency, 0)})`;
+    if (net > 0) reimbEl.textContent = `You're owed ${formatMoney(currency, net)} (net)`;
+    else if (net < 0) reimbEl.textContent = `You owe ${formatMoney(currency, Math.abs(net))} (net)`;
+    else reimbEl.textContent = `Balance settled (net ${formatMoney(currency, 0)})`;
   }
 
   const theyOweMe = Number(reimbSummary?.theyOweMe || 0);
@@ -1294,7 +1318,7 @@ function wireEvents() {
       splitWithMoreEl.style.display = on ? 'block' : 'none';
       if (!on) {
         splitRatioEl.value = '';
-        splitWithEl.value = 'vyas';
+        splitWithEl.value = '';
         splitWithNameEl.style.display = 'none';
         splitWithNameEl.value = '';
         splitWithMoreEl.value = '';
@@ -1432,6 +1456,30 @@ function wireEvents() {
     if (forOtherPersonEl) {
       setPersonSelectOptions(forOtherPersonEl, [...(cfg.roommates || []), ...getRecentPeople()]);
     }
+
+    // Expenses tab: dynamic roommate & people options (no hardcoding)
+    const paidByEl = document.getElementById('paidBy');
+    const paidByRoommateEl = document.getElementById('paidByRoommateName');
+    if (paidByRoommateEl) setRoommateSelectOptions(paidByRoommateEl, cfg.roommates || []);
+
+    const splitWithEl = document.getElementById('splitWith');
+    if (splitWithEl) {
+      const people = [...(cfg.roommates || []), ...getRecentPeople()];
+      setPersonSelectOptions(splitWithEl, people);
+    }
+
+    const updatePaidByUi = () => {
+      if (!paidByEl || !paidByRoommateEl) return;
+      const on = String(paidByEl.value) === 'roommate';
+      paidByRoommateEl.style.display = on ? 'block' : 'none';
+      if (!on) paidByRoommateEl.value = '';
+    };
+    if (paidByEl) {
+      paidByEl.onchange = () => {
+        updatePaidByUi();
+      };
+      updatePaidByUi();
+    }
   };
 
   applyConfigToUi();
@@ -1555,7 +1603,6 @@ function wireEvents() {
     });
   }
 
-  // Simplified: only me vs Vyas.
 
   const partyEl = document.getElementById('partyFilter');
   if (partyEl) {
@@ -1585,7 +1632,7 @@ function wireEvents() {
   const forOtherPerson = String(document.getElementById('forOtherPerson')?.value || '').trim();
   const forOtherNameRaw = (document.getElementById('forOtherName')?.value || '').trim();
   const forOtherName = forOtherPerson && forOtherPerson !== 'other' ? forOtherPerson : forOtherNameRaw;
-    const splitWith = document.getElementById('splitWith')?.value || 'vyas';
+  const splitWith = String(document.getElementById('splitWith')?.value || '').trim();
     const splitWithName = (document.getElementById('splitWithName')?.value || '').trim();
     const splitWithMore = (document.getElementById('splitWithMore')?.value || '').trim();
     const splitRatio = document.getElementById('splitRatio').value.trim();
@@ -1604,7 +1651,9 @@ function wireEvents() {
     } else {
       // paidBy === 'roommate' or 'other'
       metaParts.push('paidby:roommate');
-      metaParts.push('other:vyas');
+      // If the user selected a specific roommate name (UI sets it separately), encode it.
+      const paidByRoommateName = String(document.getElementById('paidByRoommateName')?.value || '').trim();
+      if (paidByRoommateName) metaParts.push(`other:${nicePersonLabel(paidByRoommateName)}`);
     }
 
     if (split) {
@@ -1623,14 +1672,9 @@ function wireEvents() {
       addRecentPerson(forOtherName);
     }
 
-    // If splitting with someone other than Vyas, encode the counterparty.
-    // (Also encode Vyas explicitly, so old defaults don't get mixed with named parties.)
     if (split) {
-      if (splitWith === 'other') {
-        if (splitWithName) metaParts.push(`other:${nicePersonLabel(splitWithName)}`);
-      } else {
-        metaParts.push('other:vyas');
-      }
+      if (splitWith && splitWith !== 'other') metaParts.push(`other:${nicePersonLabel(splitWith)}`);
+      else if (splitWith === 'other' && splitWithName) metaParts.push(`other:${nicePersonLabel(splitWithName)}`);
 
       // Allow adding multiple people; emit repeated other:<name> tokens for max compatibility.
       for (const p of normalizePeopleList(splitWithMore)) metaParts.push(`other:${p}`);
@@ -1656,7 +1700,7 @@ function wireEvents() {
     document.getElementById('occurredOn').value = '';
     document.getElementById('split').checked = false;
     document.getElementById('splitRatio').value = '';
-  if (document.getElementById('splitWith')) document.getElementById('splitWith').value = 'vyas';
+  if (document.getElementById('splitWith')) document.getElementById('splitWith').value = '';
   if (document.getElementById('splitWithName')) document.getElementById('splitWithName').value = '';
   if (document.getElementById('splitWithMore')) document.getElementById('splitWithMore').value = '';
     if (document.getElementById('forOther')) document.getElementById('forOther').checked = false;

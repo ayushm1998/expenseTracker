@@ -587,7 +587,7 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
 
   const netWorth = ledgerTotals.incomeTotal - (allTime.total + ledgerTotals.savingsTotal + ledgerTotals.investmentTotal + ledgerTotals.liabilityTotal);
 
-  res.json({
+  return res.json({
     ok: true,
     currency: CURRENCY,
     allTime,
