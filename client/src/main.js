@@ -742,7 +742,7 @@ function renderShell() {
       </section>
 
       <section class="grid">
-        <div class="card">
+        <div class="card span-2" data-card="expenses">
           <div class="card-head">
             <h2>Expenses</h2>
             <div class="card-head-right">
