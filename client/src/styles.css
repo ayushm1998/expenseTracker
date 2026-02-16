@@ -128,7 +128,7 @@ body{
   .grow{min-width:0}
 
   /* Make the first row (date + card) stack and fill */
-  #occurredOn, #card{width:100%}
+  #occurredOn, #card, #ledgerOccurredOn{width:100%}
 }
 /* When the ingest controls are split into multiple rows, keep each row visually consistent */
 #ingestForm .row + .row {

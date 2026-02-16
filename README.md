@@ -1,4 +1,4 @@
-# Expense Ingest Tracker (free local MVP)
+# Expense Tracker (free local MVP)
 
 This is a simple expense tracker where you can **send a WhatsApp/SMS-like message** (for now via a web form / API), and it will:
 - parse the amount + optional category + note

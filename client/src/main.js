@@ -506,7 +506,7 @@ function renderShell() {
   document.querySelector('#app').innerHTML = `
     <main class="container">
       <header class="header">
-        <h1>Expense Ingest Tracker</h1>
+        <h1>Expense Tracker</h1>
         <p class="sub">Type a WhatsApp/SMS-style message and it’ll add an expense.</p>
       </header>
 
