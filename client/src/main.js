@@ -1620,29 +1620,38 @@ function wireEvents() {
         else el.classList?.remove?.('muted-disabled');
       };
 
-      // Disable split controls and clear values (we'll encode split:1/0 on submit).
+      // Disable split controls and clear values ONLY when paid-for-me is ON.
+      // Otherwise the user can freely use Split.
       if (splitEl) {
-        splitEl.checked = false;
+        if (paidForMeOn) splitEl.checked = false;
         splitEl.disabled = paidForMeOn;
       }
       if (splitWithEl) {
-        splitWithEl.value = '';
-        splitWithEl.style.display = 'none';
+        if (paidForMeOn) {
+          splitWithEl.value = '';
+          splitWithEl.style.display = 'none';
+        }
         splitWithEl.disabled = paidForMeOn;
       }
       if (splitWithNameEl) {
-        splitWithNameEl.value = '';
-        splitWithNameEl.style.display = 'none';
+        if (paidForMeOn) {
+          splitWithNameEl.value = '';
+          splitWithNameEl.style.display = 'none';
+        }
         splitWithNameEl.disabled = paidForMeOn;
       }
       if (splitWithMoreEl) {
-        splitWithMoreEl.value = '';
-        splitWithMoreEl.style.display = 'none';
+        if (paidForMeOn) {
+          splitWithMoreEl.value = '';
+          splitWithMoreEl.style.display = 'none';
+        }
         splitWithMoreEl.disabled = paidForMeOn;
       }
       if (splitRatioEl) {
-        splitRatioEl.value = '';
-        splitRatioEl.style.display = 'none';
+        if (paidForMeOn) {
+          splitRatioEl.value = '';
+          splitRatioEl.style.display = 'none';
+        }
         splitRatioEl.disabled = paidForMeOn;
       }
 
