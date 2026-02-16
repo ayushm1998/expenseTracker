@@ -1633,16 +1633,23 @@ function wireEvents() {
       paidByEl.onchange = () => {
         updatePaidByUi();
 
-        // UX: if someone else paid, default to splitting it with me.
-        // This makes reimbursements/"I owe" work without extra clicks.
+        // Default behavior:
+        // - If roommate paid and user did NOT opt into Split, treat it as "Paid for me"
+        //   (100% on me; I owe the roommate the full amount).
+        // - If user turns on Split, they can override this and do a true split.
         const isRoommatePaid = String(paidByEl.value) === 'roommate';
+        const paidForMeEl = document.getElementById('paidForMe');
         const splitEl = document.getElementById('split');
-        const splitWithEl = document.getElementById('splitWith');
-        if (isRoommatePaid && splitEl && splitWithEl) {
-          splitEl.checked = true;
-          splitWithEl.style.display = 'block';
-          splitWithEl.value = 'me';
+        if (isRoommatePaid && paidForMeEl && splitEl && !splitEl.checked) {
+          paidForMeEl.checked = true;
         }
+
+        // If they switch back to "I paid", turn off paid-for-me.
+        if (!isRoommatePaid && paidForMeEl) {
+          paidForMeEl.checked = false;
+        }
+
+        updatePaidForMeUi();
       };
       updatePaidByUi();
     }
@@ -1653,6 +1660,18 @@ function wireEvents() {
         updatePaidForMeUi();
       });
       updatePaidForMeUi();
+    }
+
+    const splitEl = document.getElementById('split');
+    if (splitEl) {
+      splitEl.addEventListener('change', () => {
+        // If the user explicitly chooses Split, that should override "Paid for me".
+        const paidForMeEl = document.getElementById('paidForMe');
+        if (splitEl.checked && paidForMeEl && paidForMeEl.checked) {
+          paidForMeEl.checked = false;
+        }
+        updatePaidForMeUi();
+      });
     }
   };
 
