@@ -1963,8 +1963,24 @@ function wireEvents() {
       return;
     }
 
-    status.textContent = result.ack?.message || 'Added.';
-    status.className = 'status ok';
+    // The API ack message always references the full amount; for split expenses,
+    // users usually care about "my share". If server returned myAmount, show it.
+    {
+      const exp = result?.expense;
+      const currency = exp?.currency || result?.ack?.currency || 'USD';
+      const full = Number(exp?.amount ?? 0);
+      const mine = Number(exp?.myAmount ?? exp?.my_amount ?? NaN);
+      const splitType = String(exp?.splitType ?? exp?.split_type ?? 'none');
+
+      if (status) {
+        if (splitType && splitType !== 'none' && Number.isFinite(mine)) {
+          status.textContent = `Added ${formatMoney(currency, full)} (my share ${formatMoney(currency, mine)}).`;
+        } else {
+          status.textContent = result.ack?.message || 'Added.';
+        }
+        status.className = 'status ok';
+      }
+    }
     document.getElementById('text').value = '';
     document.getElementById('occurredOn').value = '';
     document.getElementById('split').checked = false;
