@@ -705,6 +705,14 @@ function renderShell() {
               <option value="">Which roommate?</option>
             </select>
 
+            <div class="toggle-group" id="paidForMeGroup">
+              <label class="toggle" for="paidForMe" title="Someone else paid, but this is 100% your expense (you owe them the full amount).">
+                <input id="paidForMe" name="paidForMe" type="checkbox" />
+                <span class="toggle-ui"></span>
+                <span class="toggle-text">Paid for me</span>
+              </label>
+            </div>
+
             <div class="toggle-group" id="forOtherGroup">
               <label class="toggle" for="forOther" title="You paid the full amount for someone else (your share becomes 0).">
                 <input id="forOther" name="forOther" type="checkbox" />
@@ -1565,6 +1573,62 @@ function wireEvents() {
       paidByRoommateEl.style.display = on ? 'block' : 'none';
       if (!on) paidByRoommateEl.value = '';
     };
+
+    const updatePaidForMeUi = () => {
+      const paidForMeEl = document.getElementById('paidForMe');
+      const forOtherEl = document.getElementById('forOther');
+      const splitEl = document.getElementById('split');
+      const splitWithEl = document.getElementById('splitWith');
+      const splitWithNameEl = document.getElementById('splitWithName');
+      const splitWithMoreEl = document.getElementById('splitWithMore');
+      const splitRatioEl = document.getElementById('splitRatio');
+
+      const paidForMeOn = Boolean(paidForMeEl?.checked);
+
+      // Force paidBy=roommate (because someone else paid)
+      if (paidForMeOn && paidByEl) paidByEl.value = 'roommate';
+      updatePaidByUi();
+
+      // This mode is mutually exclusive with "For someone".
+      if (paidForMeOn && forOtherEl) forOtherEl.checked = false;
+
+      // This mode implies 100% me, so we don't need split UI.
+      const disable = (el, on) => {
+        if (!el) return;
+        el.disabled = on;
+        if (on) el.classList?.add?.('muted-disabled');
+        else el.classList?.remove?.('muted-disabled');
+      };
+
+      // Disable split controls and clear values (we'll encode split:1/0 on submit).
+      if (splitEl) {
+        splitEl.checked = false;
+        splitEl.disabled = paidForMeOn;
+      }
+      if (splitWithEl) {
+        splitWithEl.value = '';
+        splitWithEl.style.display = 'none';
+        splitWithEl.disabled = paidForMeOn;
+      }
+      if (splitWithNameEl) {
+        splitWithNameEl.value = '';
+        splitWithNameEl.style.display = 'none';
+        splitWithNameEl.disabled = paidForMeOn;
+      }
+      if (splitWithMoreEl) {
+        splitWithMoreEl.value = '';
+        splitWithMoreEl.style.display = 'none';
+        splitWithMoreEl.disabled = paidForMeOn;
+      }
+      if (splitRatioEl) {
+        splitRatioEl.value = '';
+        splitRatioEl.style.display = 'none';
+        splitRatioEl.disabled = paidForMeOn;
+      }
+
+      // Also disable the "For someone" group while this is on.
+      disable(document.getElementById('forOtherGroup'), paidForMeOn);
+    };
     if (paidByEl) {
       paidByEl.onchange = () => {
         updatePaidByUi();
@@ -1581,6 +1645,14 @@ function wireEvents() {
         }
       };
       updatePaidByUi();
+    }
+
+    const paidForMeEl = document.getElementById('paidForMe');
+    if (paidForMeEl) {
+      paidForMeEl.addEventListener('change', () => {
+        updatePaidForMeUi();
+      });
+      updatePaidForMeUi();
     }
   };
 
@@ -1737,6 +1809,7 @@ function wireEvents() {
     const card = document.getElementById('card').value;
     const paidBy = document.getElementById('paidBy').value;
     const split = document.getElementById('split').checked;
+  const paidForMe = Boolean(document.getElementById('paidForMe')?.checked);
     const forOther = Boolean(document.getElementById('forOther')?.checked);
   const forOtherPerson = String(document.getElementById('forOtherPerson')?.value || '').trim();
   const forOtherNameRaw = (document.getElementById('forOtherName')?.value || '').trim();
@@ -1755,7 +1828,18 @@ function wireEvents() {
     if (card) metaParts.push(`card:${card}`);
     // Keep the existing parser contract: paidby supports only me|roommate.
     // For friends/other people, we map to paidby:roommate and encode the name in other:<name>.
-    if (paidBy === 'me') {
+    if (paidForMe) {
+      metaParts.push('paidby:roommate');
+      const payerName = String(document.getElementById('paidByRoommateName')?.value || '').trim();
+      if (!payerName) {
+        status.textContent = 'Select who paid (roommate name) for “Paid for me”.';
+        status.className = 'status error';
+        return;
+      }
+      metaParts.push(`other:${nicePersonLabel(payerName)}`);
+      // Encode 100% me (me:other = 1:0)
+      metaParts.push('split:1/0');
+    } else if (paidBy === 'me') {
       metaParts.push('paidby:me');
     } else {
       // paidBy === 'roommate' or 'other'
@@ -1765,12 +1849,12 @@ function wireEvents() {
       if (paidByRoommateName) metaParts.push(`other:${nicePersonLabel(paidByRoommateName)}`);
     }
 
-    if (split) {
+    if (!paidForMe && split) {
       // IMPORTANT: parser expects split:<value> (e.g. split:equal or split:2/1).
       metaParts.push(splitRatio ? `split:${splitRatio}` : 'split:equal');
     }
 
-    if (forOther) {
+    if (!paidForMe && forOther) {
       if (!forOtherName) {
         status.textContent = 'Please enter who this expense was 100% for.';
         status.className = 'status error';
@@ -1781,7 +1865,7 @@ function wireEvents() {
       addRecentPerson(forOtherName);
     }
 
-    if (split) {
+    if (!paidForMe && split) {
       if (splitWith && splitWith !== 'other') {
         if (splitWith === 'me') {
           // Special-case: "split with me" means split with the paying roommate.
