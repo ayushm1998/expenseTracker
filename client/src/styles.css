@@ -158,6 +158,10 @@ button{
     display:block;
     max-width:100%;
     min-width:0;
+    padding-right:14px;
+    padding-left:14px;
+    appearance:none;
+    -webkit-appearance:none;
   }
 
   /* Make toggles feel aligned (same height as inputs) */
