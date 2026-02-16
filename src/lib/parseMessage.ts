@@ -84,6 +84,13 @@ const CATEGORY_WORDS = new Set([
 
   // Lifestyle
   'shopping',
+  // Common retailers (map to shopping)
+  'walmart',
+  'amazon',
+  'dollartree',
+  'dollar-tree',
+  'dollar_tree',
+  'dollar',
   'entertainment',
   'movies',
   'movie',
@@ -104,6 +111,16 @@ const CATEGORY_WORDS = new Set([
 function normalizeCategory(cat: string): string {
   const c = String(cat || '').trim().toLowerCase();
   if (!c) return c;
+
+  // Shopping / retailer synonyms
+  if (
+    c === 'walmart' ||
+    c === 'amazon' ||
+    c === 'dollartree' ||
+    c === 'dollar-tree' ||
+    c === 'dollar_tree'
+  )
+    return 'shopping';
 
   // Grocery synonyms
   if (c === 'groceries') return 'grocery';
