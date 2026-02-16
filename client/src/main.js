@@ -982,7 +982,16 @@ async function refresh() {
   // Selected total: by default we want this to reflect *my share* (myAmount) rather than the full billed amount.
   // The full billed amount is still useful, so we keep it as a muted secondary hint below.
   const selectedBilledTotal = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
-  const selectedTotal = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
+  // "My billed" rules:
+  // 1) If I paid, count the full billed amount.
+  // 2) If someone else paid, count only my share.
+  const selectedTotal = (expensesSelected.expenses || []).reduce((s, e) => {
+    const full = Number(e.amount || 0);
+    const myShare = Number(e.myAmount ?? e.amount ?? 0);
+    const paidBy = String(e.paidBy || '').toLowerCase();
+    const iPaid = !paidBy || paidBy === 'me';
+    return s + (iPaid ? full : myShare);
+  }, 0);
   const selectedTotalEl = document.getElementById('selectedTotal');
   if (selectedTotalEl) {
     selectedTotalEl.innerHTML = `${formatMoney(currency, selectedTotal)}<div class="muted" style="font-size:12px;line-height:1.2;margin-top:2px;">billed ${formatMoney(currency, selectedBilledTotal)}</div>`;
