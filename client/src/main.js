@@ -979,8 +979,14 @@ async function refresh() {
   const currency = summary.currency || 'USD';
 
   // Selected-range totals (computed client-side from the filtered expense list)
-  const selectedTotal = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
-  document.getElementById('selectedTotal').textContent = formatMoney(currency, selectedTotal);
+  // Selected total: by default we want this to reflect *my share* (myAmount) rather than the full billed amount.
+  // The full billed amount is still useful, so we keep it as a muted secondary hint below.
+  const selectedBilledTotal = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
+  const selectedTotal = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
+  const selectedTotalEl = document.getElementById('selectedTotal');
+  if (selectedTotalEl) {
+    selectedTotalEl.innerHTML = `${formatMoney(currency, selectedTotal)}<div class="muted" style="font-size:12px;line-height:1.2;margin-top:2px;">billed ${formatMoney(currency, selectedBilledTotal)}</div>`;
+  }
 
   // Selected-range "my share" (after splits). This reflects what you actually consumed.
   const selectedMyShare = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
@@ -1116,7 +1122,7 @@ async function refresh() {
     note.className = 'muted';
     note.style.marginTop = '6px';
     note.style.fontSize = '12px';
-    note.textContent = `Selected: spent ${formatMoney(currency, selectedTotal)} · my share ${formatMoney(currency, selectedMyShare)} · expected back ${formatMoney(currency, theyOweMe)}`;
+    note.textContent = `Selected: my total ${formatMoney(currency, selectedTotal)} · billed ${formatMoney(currency, selectedBilledTotal)} · expected back ${formatMoney(currency, theyOweMe)}`;
     shareChartEl.appendChild(note);
   }
 
