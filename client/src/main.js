@@ -751,6 +751,12 @@ function renderShell() {
                 <option value="month">Month</option>
               </select>
               <input id="expensesMonth" name="expensesMonth" type="month" aria-label="Expenses month" style="display:none;" />
+              <select id="expensesFilter" name="expensesFilter" aria-label="Expenses filter">
+                <option value="all">All</option>
+                <option value="split">Split only</option>
+                <option value="onlyMe">Only me</option>
+                <option value="roommatePaid">Roommate paid</option>
+              </select>
               <select id="cardFilter" name="cardFilter" aria-label="Filter by card">
               <option value="">All cards</option>
               <option value="amex">Amex</option>
@@ -1117,7 +1123,15 @@ async function refresh() {
   const root = document.getElementById('expenses');
   root.innerHTML = '';
 
-  for (const e of expensesList.expenses || []) {
+  const expensesFilter = String(document.getElementById('expensesFilter')?.value || 'all');
+  const listRows = (expensesList.expenses || []).filter((e) => {
+    if (expensesFilter === 'split') return Boolean(e.splitType && e.splitType !== 'none');
+    if (expensesFilter === 'onlyMe') return !e.splitType || e.splitType === 'none';
+    if (expensesFilter === 'roommatePaid') return String(e.paidBy || '') === 'roommate';
+    return true;
+  });
+
+  for (const e of listRows) {
     const div = document.createElement('div');
     div.className = 'expense';
     div.dataset.expenseId = e.id;
@@ -1695,6 +1709,13 @@ function wireEvents() {
   const partyEl = document.getElementById('partyFilter');
   if (partyEl) {
     partyEl.addEventListener('change', async () => {
+      await refresh();
+    });
+  }
+
+  const expensesFilterEl = document.getElementById('expensesFilter');
+  if (expensesFilterEl) {
+    expensesFilterEl.addEventListener('change', async () => {
       await refresh();
     });
   }
