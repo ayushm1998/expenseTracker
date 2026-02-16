@@ -129,6 +129,13 @@ body{
 
   /* Make the first row (date + card) stack and fill */
   #occurredOn, #card, #ledgerOccurredOn{width:100%}
+
+  /* iOS Safari: ensure ALL controls in the ingest rows fill the card width */
+  #ingestForm .row > *,
+  #ledgerForm .row > *{
+    width:100%;
+    flex:1 1 auto;
+  }
 }
 /* When the ingest controls are split into multiple rows, keep each row visually consistent */
 #ingestForm .row + .row {
