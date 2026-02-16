@@ -847,9 +847,18 @@ function renderShell() {
           <div id="cardTotals" class="muted" style="margin-top:8px;font-size:12px;"></div>
 
           <h3 style="margin-top: 18px;">Spending by category</h3>
-          <div id="chart" class="chart">Loading…</div>
+          <div id="categoryCharts" class="chart" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;">
+            <div>
+              <div class="muted" style="font-size:12px;margin-bottom:6px;">Selected range</div>
+              <div id="chart" class="chart">Loading…</div>
+            </div>
+            <div>
+              <div class="muted" style="font-size:12px;margin-bottom:6px;">Year-to-date</div>
+              <div id="chartYear" class="chart">Loading…</div>
+            </div>
+          </div>
           <div class="chart-legend">
-            <small>Pie chart of category totals (selected range)</small>
+            <small>Category totals for the selected range and the full year-to-date.</small>
           </div>
         </div>
       </section>
@@ -934,22 +943,32 @@ async function refresh() {
   const q = rangeToQuery(selectedRange);
   const cardFilter = document.getElementById('cardFilter')?.value || '';
   const expQ = expensesMonthToQuery();
-  const query = new URLSearchParams({
+  // For charts/summary, we want the selected-range filter (week/month/year/custom/all).
+  // For the Expenses tab list, we want its independent month filter.
+  const selectedRangeQuery = new URLSearchParams({
+    limit: '200',
+    ...(q.from ? { from: q.from } : {}),
+    ...(q.to ? { to: q.to } : {}),
+    ...(cardFilter ? { card: cardFilter } : {}),
+  });
+  const expensesSelected = await fetchJson(`/api/expenses?${selectedRangeQuery.toString()}`);
+
+  const listQuery = new URLSearchParams({
     limit: '200',
     ...(expQ.from ? { from: expQ.from } : {}),
     ...(expQ.to ? { to: expQ.to } : {}),
     ...(cardFilter ? { card: cardFilter } : {}),
   });
-  const expenses = await fetchJson(`/api/expenses?${query.toString()}`);
+  const expensesList = await fetchJson(`/api/expenses?${listQuery.toString()}`);
 
   const currency = summary.currency || 'USD';
 
   // Selected-range totals (computed client-side from the filtered expense list)
-  const selectedTotal = (expenses.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
+  const selectedTotal = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
   document.getElementById('selectedTotal').textContent = formatMoney(currency, selectedTotal);
 
   // Selected-range "my share" (after splits). This reflects what you actually consumed.
-  const selectedMyShare = (expenses.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
+  const selectedMyShare = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
 
   // Labels
   const labelEl = document.getElementById('selectedLabel');
@@ -1086,13 +1105,18 @@ async function refresh() {
     shareChartEl.appendChild(note);
   }
 
-  const buckets = bucketByCategory(expenses.expenses);
-  document.getElementById('chart').innerHTML = renderPieChart(buckets, currency);
+  const buckets = bucketByCategory(expensesSelected.expenses || []);
+  const chartEl = document.getElementById('chart');
+  if (chartEl) chartEl.innerHTML = renderPieChart(buckets, currency);
+
+  const ytdBuckets = bucketByCategory(ytdResp.expenses || []);
+  const chartYearEl = document.getElementById('chartYear');
+  if (chartYearEl) chartYearEl.innerHTML = renderPieChart(ytdBuckets, currency);
 
   const root = document.getElementById('expenses');
   root.innerHTML = '';
 
-  for (const e of expenses.expenses) {
+  for (const e of expensesList.expenses || []) {
     const div = document.createElement('div');
     div.className = 'expense';
     div.dataset.expenseId = e.id;
