@@ -1410,8 +1410,23 @@ function wireEvents() {
   const splitToggleEl = document.getElementById('splitToggle');
   const forOtherGroupEl = document.getElementById('forOtherGroup');
   if (splitEl && splitRatioEl && splitWithEl && splitWithNameEl && splitWithMoreEl) {
+    const normalizeSplitRatio = (raw) => {
+      const s = String(raw || '').trim();
+      if (!s) return '';
+      // Accept: 1/1, 1:1, 1-1, 1,1, 2:1 etc.
+      const cleaned = s.replace(/\s+/g, '');
+      const m = cleaned.match(/^(\d+(?:\.\d+)?)[\/:,-](\d+(?:\.\d+)?)$/);
+      if (!m) return '';
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) return '';
+      if (a === 0 && b === 0) return '';
+      return `${m[1]}/${m[2]}`;
+    };
+
     const toggleSplit = () => {
       const on = splitEl.checked;
+      // When Split is on, always show ratio input (optional). Empty means equal.
       splitRatioEl.style.display = on ? 'block' : 'none';
       splitWithEl.style.display = on ? 'block' : 'none';
       splitWithMoreEl.style.display = on ? 'block' : 'none';
@@ -1486,6 +1501,11 @@ function wireEvents() {
       await refresh();
     });
     splitWithEl.addEventListener('change', toggleSplit);
+    splitRatioEl.addEventListener('blur', () => {
+      // Normalize on blur so user can type 1:1 and we store 1/1.
+      const norm = normalizeSplitRatio(splitRatioEl.value);
+      if (norm) splitRatioEl.value = norm;
+    });
     toggleSplit();
 
     if (forOtherEl && forOtherNameEl) {
@@ -1836,7 +1856,21 @@ function wireEvents() {
   const splitWith = String(document.getElementById('splitWith')?.value || '').trim();
     const splitWithName = (document.getElementById('splitWithName')?.value || '').trim();
     const splitWithMore = (document.getElementById('splitWithMore')?.value || '').trim();
-    const splitRatio = document.getElementById('splitRatio').value.trim();
+    const normalizeSplitRatio = (raw) => {
+      const s = String(raw || '').trim();
+      if (!s) return '';
+      const cleaned = s.replace(/\s+/g, '');
+      const m = cleaned.match(/^(\d+(?:\.\d+)?)[\/:,-](\d+(?:\.\d+)?)$/);
+      if (!m) return '';
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) return '';
+      if (a === 0 && b === 0) return '';
+      return `${m[1]}/${m[2]}`;
+    };
+
+    const splitRatioRaw = document.getElementById('splitRatio').value.trim();
+    const splitRatio = normalizeSplitRatio(splitRatioRaw);
 
     // If the user picked a date, append it to the message so the existing parser can extract it.
     // This keeps the API contract unchanged.
@@ -1870,6 +1904,11 @@ function wireEvents() {
 
     if (!paidForMe && split) {
       // IMPORTANT: parser expects split:<value> (e.g. split:equal or split:2/1).
+      if (splitRatioRaw && !splitRatio) {
+        status.textContent = 'Split ratio format should be like 1:1, 1/1, 1:0, 2:1.';
+        status.className = 'status error';
+        return;
+      }
       metaParts.push(splitRatio ? `split:${splitRatio}` : 'split:equal');
     }
 
