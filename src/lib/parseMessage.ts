@@ -30,26 +30,97 @@ export type ParsedExpense = {
   forPerson?: string;
 };
 
+// A lightweight, local-first category template.
+// The parser treats the *first* meaningful token as a category when it matches one of these.
+// Keep these normalized and stable so charts don’t fragment.
 const CATEGORY_WORDS = new Set([
+  // Food
   'food',
+  'dining',
+  'restaurant',
+
+  // Housing
   'rent',
+  'housing',
+  'mortgage',
+
+  // Transport / travel
   'travel',
+  'transport',
+  'transit',
   'cab',
   'uber',
+  'lyft',
   'ola',
+  'taxi',
+  'flight',
+  'hotel',
+  'parking',
+  'toll',
   'fuel',
-  'shopping',
+  'gas',
+  // Bay Area examples
+  'clipper',
+  'bart',
+  'muni',
+  'caltrain',
+
+  // Utilities & recurring
   'bills',
+  'utilities',
+  'electric',
+  'water',
+  'internet',
+  'phone',
+  'subscription',
+  'subscriptions',
+  'netflix',
+  'spotify',
+  'youtube',
+  'apple',
+
+  // Lifestyle
+  'shopping',
   'entertainment',
+  'movies',
+  'movie',
+  'comedy',
+  'show',
+  'shows',
+
+  // Health
   'health',
   'medical',
+  'pharmacy',
+
+  // Other common
+  'education',
+  'gifts',
 ]);
 
 function normalizeCategory(cat: string): string {
   const c = String(cat || '').trim().toLowerCase();
   if (!c) return c;
+
+  // Housing
+  if (c === 'mortgage') return 'housing';
+
   // Transport synonyms
-  if (c === 'cab' || c === 'uber' || c === 'ola') return 'transport';
+  if (c === 'cab' || c === 'uber' || c === 'lyft' || c === 'ola' || c === 'taxi') return 'transport';
+
+  // Transit systems / stored value
+  if (c === 'clipper' || c === 'bart' || c === 'muni' || c === 'caltrain') return 'travel';
+
+  // Food synonyms
+  if (c === 'restaurant') return 'dining';
+
+  // Entertainment synonyms
+  if (c === 'movie' || c === 'movies' || c === 'comedy' || c === 'show' || c === 'shows') return 'entertainment';
+
+  // Utilities / recurring
+  if (c === 'electric' || c === 'water' || c === 'internet' || c === 'phone') return 'utilities';
+  if (c === 'subscription' || c === 'subscriptions' || c === 'netflix' || c === 'spotify' || c === 'youtube') return 'subscriptions';
+
   return c;
 }
 
