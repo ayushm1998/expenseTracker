@@ -1101,11 +1101,17 @@ async function refresh() {
 
   const theyOweMe = Number(reimbSummary?.theyOweMe || 0);
   const iOweThem = Number(reimbSummary?.iOweThem || 0);
+  const expectedBackNet = theyOweMe - iOweThem;
 
   const myShareSelEl = document.getElementById('myShareSelected');
   if (myShareSelEl) myShareSelEl.textContent = formatMoney(currency, selectedMyShare);
   const expectedBackEl = document.getElementById('expectedBack');
-  if (expectedBackEl) expectedBackEl.textContent = formatMoney(currency, theyOweMe);
+  if (expectedBackEl) {
+    expectedBackEl.innerHTML = `${formatMoney(currency, expectedBackNet)}<div class="muted" style="font-size:12px;line-height:1.2;margin-top:2px;">owed ${formatMoney(
+      currency,
+      theyOweMe,
+    )} − i owe ${formatMoney(currency, iOweThem)}</div>`;
+  }
   const iOweEl = document.getElementById('iOwe');
   if (iOweEl) iOweEl.textContent = formatMoney(currency, iOweThem);
 
@@ -1114,7 +1120,7 @@ async function refresh() {
   if (shareChartEl) {
     const shareBuckets = [
       { category: 'my share', total: Math.max(0, selectedMyShare) },
-      { category: 'expected back', total: Math.max(0, theyOweMe) },
+      { category: 'expected back', total: Math.max(0, expectedBackNet) },
     ].filter((b) => b.total > 0);
     // Force side-by-side layout for this chart (pie + legend).
     shareChartEl.innerHTML = `<div class="share-pie">${renderPieChart(shareBuckets, currency)}</div>`;
@@ -1122,7 +1128,7 @@ async function refresh() {
     note.className = 'muted';
     note.style.marginTop = '6px';
     note.style.fontSize = '12px';
-    note.textContent = `Selected: my total ${formatMoney(currency, selectedTotal)} · billed ${formatMoney(currency, selectedBilledTotal)} · expected back ${formatMoney(currency, theyOweMe)}`;
+    note.textContent = `Selected: my total ${formatMoney(currency, selectedTotal)} · billed ${formatMoney(currency, selectedBilledTotal)} · expected back ${formatMoney(currency, expectedBackNet)}`;
     shareChartEl.appendChild(note);
   }
 
