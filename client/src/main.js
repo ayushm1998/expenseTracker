@@ -450,7 +450,9 @@ function setRoommateSelectOptions(selectEl, roommates) {
 }
 
 async function deleteExpense(id) {
-  splitWithEl.value = expense.otherParty ? 'other' : '';
+  return fetchJsonOrThrow(`/api/expenses/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }
 
 async function updateExpense(id, payload) {
