@@ -18,11 +18,11 @@ describe.runIf(hasDb)('db-pg expensesRepo (integration)', () => {
   });
 
   it('returns occurredOn as YYYY-MM-DD', async () => {
-    const parsed = parseExpenseMessage('food 1 repo-test');
+    const parsed = parseExpenseMessage('food 1 repo-test card:amex');
     expect(parsed).not.toBeNull();
 
     const exp = await insertExpense({
-      text: 'food 1 repo-test',
+      text: 'food 1 repo-test card:amex',
       from: 'test',
       source: 'test',
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion

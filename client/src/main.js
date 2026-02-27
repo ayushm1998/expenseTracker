@@ -14,7 +14,32 @@ async function fetchJson(url, options) {
     ...(apiKey ? { 'x-api-key': apiKey } : {}),
   };
   const res = await fetch(`${base}${url}`, { ...options, headers });
-  return res.json();
+
+  const ct = String(res.headers.get('content-type') || '').toLowerCase();
+  const isJson = ct.includes('application/json');
+  const text = await res.text();
+
+  if (!res.ok) {
+    // Try to surface server error payloads; otherwise show status.
+    if (isJson) {
+      try {
+        const j = JSON.parse(text || '{}');
+        return { ok: false, error: j?.error || j?.message || `${res.status} ${res.statusText}` };
+      } catch {
+        // fallthrough
+      }
+    }
+    return { ok: false, error: text?.trim() || `${res.status} ${res.statusText}` };
+  }
+
+  if (!text) return { ok: true };
+  if (!isJson) return { ok: false, error: `Expected JSON but got ${ct || 'unknown content-type'}` };
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: 'Failed to parse JSON response' };
+  }
 }
 
 async function fetchJsonOrThrow(url, options) {
@@ -82,7 +107,7 @@ function openExpenseEditor(expense, { onSave } = {}) {
     !baseTextEl ||
     !occurredOnEl ||
     !cardEl ||
-  !paidByEl ||
+    !paidByEl ||
     !splitEl ||
     !splitTypeEl ||
     !splitRatioEl ||
@@ -131,6 +156,12 @@ function openExpenseEditor(expense, { onSave } = {}) {
     if (splitWithEl.value !== 'other') splitWithNameEl.value = '';
     if (splitTypeEl.value !== 'ratio') splitRatioEl.value = '';
   };
+
+  // Card is mandatory: highlight if missing.
+  if (!String(cardEl.value || '').trim()) {
+    statusEl.textContent = 'Select a card.';
+    statusEl.className = 'status error';
+  }
 
   const updatePreview = () => {
     statusEl.textContent = '';
@@ -185,6 +216,11 @@ function openExpenseEditor(expense, { onSave } = {}) {
   if (saveBtn) {
     saveBtn.onclick = async () => {
       try {
+        if (!String(cardEl.value || '').trim()) {
+          statusEl.textContent = 'Select a card.';
+          statusEl.className = 'status error';
+          return;
+        }
         saveBtn.disabled = true;
         statusEl.textContent = 'Saving…';
         const text = previewEl.textContent;
@@ -409,8 +445,8 @@ function renderSettingsLists(cfg) {
         <div class="cfg-item">
           <span>${nicePersonLabel(name)}</span>
           <button type="button" class="btn-secondary cfg-del" data-kind="roommate" data-value="${encodeURIComponent(
-            name
-          )}">Delete</button>
+          name
+        )}">Delete</button>
         </div>`
       )
       .join('');
@@ -422,8 +458,8 @@ function renderSettingsLists(cfg) {
         <div class="cfg-item">
           <span>${String(label)}</span>
           <button type="button" class="btn-secondary cfg-del" data-kind="card" data-value="${encodeURIComponent(
-            label
-          )}">Delete</button>
+          label
+        )}">Delete</button>
         </div>`
       )
       .join('');
@@ -575,9 +611,20 @@ function renderShell() {
                 <option value="transfer">Savings transfer</option>
                 <option value="investment">Investment</option>
                 <option value="liability">Liability</option>
+                <option value="cc_payment">Credit card bill payment</option>
               </select>
-              <input id="ledgerOccurredOn" name="ledgerOccurredOn" type="date" />
-              <button type="submit">Add</button>
+              <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px;">
+                <label for="ledgerOccurredOn" class="muted" style="margin:0;font-size:12px;">Date</label>
+                <input id="ledgerOccurredOn" name="ledgerOccurredOn" type="date" />
+              </div>
+              <label class="toggle" for="ledgerDeductFromChecking" title="If on, savings/investment/credit-card payments will also create a matching negative entry in checking.">
+                <input id="ledgerDeductFromChecking" name="ledgerDeductFromChecking" type="checkbox" />
+                <span class="toggle-ui"></span>
+                <span class="toggle-text">Deduct from checking</span>
+              </label>
+              <input type="hidden" id="ledgerOp" name="ledgerOp" value="add" />
+              <button type="submit" data-ledger-op="add">Add</button>
+              <button type="submit" class="btn-secondary" data-ledger-op="sub">Subtract</button>
             </div>
             <p class="muted" style="margin-top:8px;font-size:12px;">
               Optional meta: <code>account:savings</code>, <code>asset:vti</code>, <code>liability:loan</code>
@@ -604,6 +651,23 @@ function renderShell() {
           </form>
 
           <div class="muted" style="margin-top:8px;font-size:12px;" id="receivables"></div>
+
+          <div style="height:14px;"></div>
+
+          <div>
+            <div style="font-weight:800;">Accounts</div>
+            <div class="muted" style="margin-top:6px;font-size:12px;" id="accountTotals">—</div>
+          </div>
+
+          <div style="height:12px;"></div>
+
+          <div>
+            <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+              <div style="font-weight:800;">Recent ledger entries</div>
+              <div class="muted" style="font-size:12px;">(income defaults to checking)</div>
+            </div>
+            <div id="ledgerList" class="expenses" style="margin-top:10px;"></div>
+          </div>
         </div>
       </section>
 
@@ -681,11 +745,11 @@ function renderShell() {
           <input id="text" name="text" type="text" autocomplete="off" placeholder="e.g. food 250 chai" required />
           <div class="row">
             <input id="occurredOn" name="occurredOn" type="date" />
-            <select id="card" name="card" aria-label="Card">
-              <option value="">Card</option>
+            <select id="card" name="card" aria-label="Card" required>
+              <option value="">Select card…</option>
               <option value="amex">Amex</option>
               <option value="citi">Citi</option>
-              <option value="apple">Apple Card</option>
+              <option value="apple-card">Apple Card</option>
               <option value="bofa">BofA</option>
               <option value="bofa-debit">BoFA Debit</option>
               <option value="chase">Chase</option>
@@ -769,7 +833,7 @@ function renderShell() {
               <option value="">All cards</option>
               <option value="amex">Amex</option>
               <option value="citi">Citi</option>
-              <option value="apple">Apple Card</option>
+              <option value="apple-card">Apple Card</option>
               <option value="bofa">BofA</option>
               <option value="bofa-debit">BoFA Debit</option>
               <option value="chase">Chase</option>
@@ -780,6 +844,7 @@ function renderShell() {
               </select>
             </div>
           </div>
+          <div id="expensesCardTotal" class="muted" style="margin-top:8px;font-size:12px;"></div>
           <div id="expenses" class="expenses"></div>
         </div>
       </section>
@@ -795,7 +860,7 @@ function renderShell() {
                 <option value="">All cards</option>
                 <option value="amex">Amex</option>
                 <option value="citi">Citi</option>
-                <option value="apple">Apple Card</option>
+                <option value="apple-card">Apple Card</option>
                 <option value="bofa">BofA</option>
                 <option value="bofa-debit">BoFA Debit</option>
                 <option value="chase">Chase</option>
@@ -900,10 +965,10 @@ function renderShell() {
             <div class="row">
               <input id="editOccurredOn" type="date" />
               <select id="editCard" aria-label="Card">
-                <option value="">Card</option>
+                <option value="">Select card…</option>
                 <option value="amex">Amex</option>
                 <option value="citi">Citi</option>
-                <option value="apple">Apple Card</option>
+                <option value="apple-card">Apple Card</option>
                 <option value="bofa">BofA</option>
                 <option value="bofa-debit">BoFA Debit</option>
                 <option value="chase">Chase</option>
@@ -953,10 +1018,233 @@ function renderShell() {
   `;
 }
 
+function safeLower(v) {
+  return String(v ?? '').trim().toLowerCase();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function niceAccountLabel(v) {
+  const k = safeLower(v);
+  if (!k) return '';
+  if (k === 'chk' || k === 'checking' || k === 'checkings') return 'Checking';
+  if (k === 'sav' || k === 'savings') return 'Savings';
+  if (k === 'inv' || k === 'invest' || k === 'investment' || k === 'investments') return 'Investments';
+  if (k === 'cc' || k === 'credit' || k === 'card' || k === 'creditcard') return 'Credit card';
+  if (k === 'liability' || k === 'liabilities' || k === 'loan' || k === 'loans' || k === 'debt') return 'Liabilities';
+  return v;
+}
+
+function renderLedgerEntryRow(currency, e) {
+  const occurredOn = String(e?.occurredOn ?? e?.occurred_on ?? '').slice(0, 10);
+  const type = String(e?.type ?? '');
+  const amt = Number(e?.amount ?? 0);
+  const id = String(e?.id ?? '');
+  const note = String(e?.note ?? '').trim();
+  const raw = String(e?.rawText ?? e?.raw_text ?? '').trim();
+  const account = niceAccountLabel(e?.account);
+  const asset = String(e?.asset ?? '').trim();
+  const liability = String(e?.liability ?? '').trim();
+
+  let meta = [];
+  if (type) meta.push(type);
+  if (account) meta.push(`acct:${account}`);
+  if (asset) meta.push(`asset:${asset}`);
+  if (liability) meta.push(`liab:${liability}`);
+  const metaText = meta.join(' · ');
+
+  return `
+    <div class="expense">
+      <div class="left">
+        <div class="primary">${escapeHtml(note || raw || '(no text)')}</div>
+        <div class="secondary">${escapeHtml(occurredOn)}${metaText ? ` • ${escapeHtml(metaText)}` : ''}</div>
+      </div>
+      <div class="row" style="align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+        <div class="amt">${formatMoney(currency, amt)}</div>
+        <button type="button" class="chip" data-ledger-edit="${escapeHtml(id)}">Edit</button>
+        <button type="button" class="chip danger" data-ledger-del="${escapeHtml(id)}">Delete</button>
+      </div>
+    </div>
+  `;
+}
+
+async function refreshMoneyLedger() {
+  const listEl = document.getElementById('ledgerList');
+  const acctEl = document.getElementById('accountTotals');
+
+  if (listEl) listEl.innerHTML = '<div class="muted" style="font-size:12px;">Loading…</div>';
+
+  try {
+    // Make sure we have the latest receivables balances before computing net worth.
+    // refresh() populates window.__receivables from /api/summary.
+    await refresh();
+
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetchJson('/api/ledger?limit=100', { signal: ctrl.signal });
+    clearTimeout(t);
+    if (res?.ok === false) throw new Error(res?.error || 'Failed to load ledger');
+
+    const currency = res?.currency || 'USD';
+    const entries = Array.isArray(res?.entries) ? res.entries : [];
+
+    // Account totals
+    // Rules (simple + local-first):
+    // - Income => increases an account; default account is checking.
+    // - Transfer => treated as savings bucket (since backend uses transfer as savingsTotal).
+    // - Investment => investments bucket.
+    // - Liability => liabilities bucket.
+    // - If user explicitly sets account:savings/checking/investment/liability we respect it.
+    const buckets = {
+      checking: 0,
+      savings: 0,
+      investments: 0,
+      liabilities: 0,
+    };
+
+    for (const e of entries) {
+      const type = safeLower(e?.type);
+      const amount = Number(e?.amount ?? 0);
+      if (!Number.isFinite(amount) || amount === 0) continue;
+
+      const acct = safeLower(e?.account);
+      const effAcct = acct || (type === 'income' ? 'checking' : '');
+
+      if (effAcct === 'checking' || effAcct === 'checkings' || effAcct === 'chk') buckets.checking += amount;
+      else if (effAcct === 'ccpayment' || effAcct === 'cc') buckets.savings -= amount;
+
+      else if (effAcct === 'savings' || effAcct === 'sav') buckets.savings += amount;
+      else if (effAcct === 'investment' || effAcct === 'investments' || effAcct === 'inv') buckets.investments += amount;
+      else if (effAcct === 'liability' || effAcct === 'liabilities' || effAcct === 'debt' || effAcct === 'loan') buckets.liabilities += amount;
+      else {
+        // No explicit account: fall back to type buckets.
+        if (type === 'transfer') buckets.savings += amount;
+        else if (type === 'investment') buckets.investments += amount;
+        else if (type === 'liability') buckets.liabilities += amount;
+        else if (type === 'income') buckets.checking += amount;
+      }
+    }
+
+    // Borrow/Lend tracker balances (shown under Money tab) should also affect net worth buckets.
+    // Semantics:
+    // - Positive balance means someone owes you => asset (we treat as checking-equivalent).
+    // - Negative balance means you owe someone => liability.
+    // This fixes cases like "receipt I took" not showing under liabilities.
+    if (window.__receivables && typeof window.__receivables === 'object') {
+      for (const key of Object.keys(window.__receivables)) {
+        const bal = Number(window.__receivables[key]);
+        if (!Number.isFinite(bal) || bal === 0) continue;
+        if (bal > 0) buckets.checking += bal;
+        else buckets.liabilities += Math.abs(bal);
+      }
+    }
+
+    const netWorth = buckets.checking + buckets.savings + buckets.investments - buckets.liabilities;
+    if (acctEl) {
+      acctEl.textContent = `Checking: ${formatMoney(currency, buckets.checking)} · Savings: ${formatMoney(
+        currency,
+        buckets.savings
+      )} · Investments: ${formatMoney(currency, buckets.investments)} · Liabilities: ${formatMoney(
+        currency,
+        buckets.liabilities
+      )} · Net worth: ${formatMoney(currency, netWorth)}`;
+    }
+
+    if (listEl) {
+      if (!entries.length) {
+        listEl.innerHTML = '<div class="muted" style="font-size:12px;">No ledger entries yet.</div>';
+      } else {
+        listEl.innerHTML = entries.map((e) => renderLedgerEntryRow(currency, e)).join('');
+
+        // Wire buttons
+        for (const btn of listEl.querySelectorAll('[data-ledger-del]')) {
+          btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-ledger-del');
+            if (!id) return;
+            if (!confirm('Delete this ledger entry?')) return;
+            const r = await fetchJsonOrThrow(`/api/ledger/${id}`, { method: 'DELETE' });
+            if (r?.ok === false) throw new Error(r?.error || 'Delete failed');
+            await refresh();
+            await refreshMoneyLedger();
+          });
+        }
+
+        for (const btn of listEl.querySelectorAll('[data-ledger-edit]')) {
+          btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-ledger-edit');
+            if (!id) return;
+
+            const current = entries.find((x) => String(x?.id) === String(id));
+            const curText = String(current?.note || current?.rawText || '').trim();
+            const curAmount = String(current?.amount ?? '').trim();
+            const curDate = String(current?.occurredOn || '').slice(0, 10);
+            const curType = String(current?.type || '').trim();
+            const curAcct = String(current?.account || '').trim();
+
+            const text = prompt('Update note/text (shown in list):', curText);
+            if (text === null) return;
+            const amountStr = prompt('Update amount:', curAmount);
+            if (amountStr === null) return;
+            const amount = Number(amountStr);
+            if (!Number.isFinite(amount)) {
+              alert('Invalid amount');
+              return;
+            }
+            const occurredOn = prompt('Update date (YYYY-MM-DD):', curDate);
+            if (occurredOn === null) return;
+            const type = prompt('Update type (income/transfer/investment/liability):', curType);
+            if (type === null) return;
+            const account = prompt('Update account (checking/savings/investments/liabilities) or blank:', curAcct);
+            if (account === null) return;
+
+            const r = await fetchJsonOrThrow(`/api/ledger/${id}`, {
+              method: 'PATCH',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                note: text,
+                rawText: text,
+                amount,
+                occurredOn,
+                type,
+                account: account.trim() ? account.trim() : null,
+              }),
+            });
+            if (r?.ok === false) throw new Error(r?.error || 'Update failed');
+            await refresh();
+            await refreshMoneyLedger();
+          });
+        }
+      }
+    }
+  } catch (err) {
+    const msg = err?.name === 'AbortError' ? 'Timed out loading ledger (is the API running on :3000?)' : err?.message || String(err);
+    if (listEl) {
+      listEl.innerHTML = `
+        <div class="status error">${escapeHtml(msg)}</div>
+        <div style="margin-top:8px;">
+          <button id="ledgerRetry" type="button" class="btn-secondary">Retry</button>
+        </div>
+      `;
+      const btn = document.getElementById('ledgerRetry');
+      if (btn) btn.onclick = () => refreshMoneyLedger();
+    }
+    if (acctEl) acctEl.textContent = '—';
+  }
+}
+
 async function refresh() {
   const summary = await fetchJson('/api/summary');
   const q = rangeToQuery(selectedRange);
   const cardFilter = document.getElementById('cardFilter')?.value || '';
+  // Expenses tab uses the same card filter dropdown (#cardFilter).
+  const expensesCardFilter = cardFilter;
   const expQ = expensesMonthToQuery();
   // For charts/summary, we want the selected-range filter (week/month/year/custom/all).
   // For the Expenses tab list, we want its independent month filter.
@@ -972,11 +1260,25 @@ async function refresh() {
     limit: '200',
     ...(expQ.from ? { from: expQ.from } : {}),
     ...(expQ.to ? { to: expQ.to } : {}),
-    ...(cardFilter ? { card: cardFilter } : {}),
+    ...(expensesCardFilter ? { card: expensesCardFilter } : {}),
   });
   const expensesList = await fetchJson(`/api/expenses?${listQuery.toString()}`);
 
   const currency = summary.currency || 'USD';
+
+  // Expenses tab: show card totals under the header, using the same filters as the Expenses list.
+  const expCardTotalEl = document.getElementById('expensesCardTotal');
+  if (expCardTotalEl) {
+    // Total for the filtered set currently driving the Expenses list.
+    const rows = Array.isArray(expensesList?.expenses) ? expensesList.expenses : [];
+    const total = rows.reduce((s, e) => s + Number(e.amount || 0), 0);
+    if (!expensesCardFilter) {
+      expCardTotalEl.textContent = '';
+    } else {
+      const label = expensesCardFilter === 'none' ? 'No card' : expensesCardFilter;
+      expCardTotalEl.textContent = `Total on ${label}: ${formatMoney(currency, total)}`;
+    }
+  }
 
   // Selected-range totals (computed client-side from the filtered expense list)
   // Selected total: by default we want this to reflect *my share* (myAmount) rather than the full billed amount.
@@ -1050,12 +1352,39 @@ async function refresh() {
   const netEl = document.getElementById('networth');
   if (netEl && summary?.ledger) {
     const l = summary.ledger;
-    netEl.textContent = `Income: ${formatMoney(currency, l.incomeTotal)} · Savings: ${formatMoney(currency, l.savingsTotal)} · Investments: ${formatMoney(currency, l.investmentTotal)} · Liabilities: ${formatMoney(currency, l.liabilityTotal)} · Net: ${formatMoney(currency, l.netWorth)}`;
+    const rows = summary?.receivables || [];
+    const recvLiab = rows.reduce((s, r) => s + Number(r?.iOwe || 0), 0);
+    const recvAsset = rows.reduce((s, r) => s + Number(r?.theyOwe || 0), 0);
+    const combinedNetWorth = Number(l.netWorth || 0) + recvAsset - recvLiab;
+
+    // Keep the original ledger-only net worth, but also show how receivables affect it.
+    netEl.innerHTML =
+      `Income: ${formatMoney(currency, l.incomeTotal)} · Savings: ${formatMoney(currency, l.savingsTotal)} · Investments: ${formatMoney(
+        currency,
+        l.investmentTotal
+      )} · Liabilities: ${formatMoney(currency, l.liabilityTotal)} · Net: ${formatMoney(currency, l.netWorth)}` +
+      `<div class="muted" style="margin-top:4px;font-size:12px;line-height:1.25;">
+        Receivables: +${formatMoney(currency, recvAsset)} · Owed by you: -${formatMoney(currency, recvLiab)} · Net after receivables: ${formatMoney(
+        currency,
+        combinedNetWorth
+      )}
+      </div>`;
   }
 
   const recvEl = document.getElementById('receivables');
   if (recvEl) {
     const rows = summary?.receivables || [];
+    // Expose balances to the Money tab so we can include them in account totals/net worth.
+    // Positive => asset (they owe you), Negative => liability (you owe them)
+    window.__receivables = {};
+    for (const r of rows) {
+      const nameKey = String(r?.counterparty ?? '').trim() || 'unknown';
+      const theyOwe = Number(r?.theyOwe || 0);
+      const iOwe = Number(r?.iOwe || 0);
+      const bal = (Number.isFinite(theyOwe) ? theyOwe : 0) - (Number.isFinite(iOwe) ? iOwe : 0);
+      if (bal !== 0) window.__receivables[nameKey] = bal;
+    }
+
     if (!rows.length) {
       recvEl.textContent = '';
     } else {
@@ -1886,12 +2215,12 @@ function wireEvents() {
     const card = document.getElementById('card').value;
     const paidBy = document.getElementById('paidBy').value;
     const split = document.getElementById('split').checked;
-  const paidForMe = Boolean(document.getElementById('paidForMe')?.checked);
+    const paidForMe = Boolean(document.getElementById('paidForMe')?.checked);
     const forOther = Boolean(document.getElementById('forOther')?.checked);
-  const forOtherPerson = String(document.getElementById('forOtherPerson')?.value || '').trim();
-  const forOtherNameRaw = (document.getElementById('forOtherName')?.value || '').trim();
-  const forOtherName = forOtherPerson && forOtherPerson !== 'other' ? forOtherPerson : forOtherNameRaw;
-  const splitWith = String(document.getElementById('splitWith')?.value || '').trim();
+    const forOtherPerson = String(document.getElementById('forOtherPerson')?.value || '').trim();
+    const forOtherNameRaw = (document.getElementById('forOtherName')?.value || '').trim();
+    const forOtherName = forOtherPerson && forOtherPerson !== 'other' ? forOtherPerson : forOtherNameRaw;
+    const splitWith = String(document.getElementById('splitWith')?.value || '').trim();
     const splitWithName = (document.getElementById('splitWithName')?.value || '').trim();
     const splitWithMore = (document.getElementById('splitWithMore')?.value || '').trim();
     const normalizeSplitRatio = (raw) => {
@@ -1916,7 +2245,12 @@ function wireEvents() {
     // Examples appended:
     //   card:amex paidby:me split 50/50 2026-02-01
     const metaParts = [];
-    if (card) metaParts.push(`card:${card}`);
+    if (!card) {
+      status.textContent = 'Select a card before adding an expense.';
+      status.className = 'status error';
+      return;
+    }
+    metaParts.push(`card:${card}`);
     // Keep the existing parser contract: paidby supports only me|roommate.
     // For friends/other people, we map to paidby:roommate and encode the name in other:<name>.
     if (paidForMe) {
@@ -2014,9 +2348,9 @@ function wireEvents() {
     document.getElementById('occurredOn').value = '';
     document.getElementById('split').checked = false;
     document.getElementById('splitRatio').value = '';
-  if (document.getElementById('splitWith')) document.getElementById('splitWith').value = '';
-  if (document.getElementById('splitWithName')) document.getElementById('splitWithName').value = '';
-  if (document.getElementById('splitWithMore')) document.getElementById('splitWithMore').value = '';
+    if (document.getElementById('splitWith')) document.getElementById('splitWith').value = '';
+    if (document.getElementById('splitWithName')) document.getElementById('splitWithName').value = '';
+    if (document.getElementById('splitWithMore')) document.getElementById('splitWithMore').value = '';
     if (document.getElementById('forOther')) document.getElementById('forOther').checked = false;
     if (document.getElementById('forOtherPerson')) {
       document.getElementById('forOtherPerson').value = '';
@@ -2044,44 +2378,176 @@ function wireEvents() {
       if (customRange) customRange.style.display = selectedRange === 'custom' ? 'flex' : 'none';
       await refresh();
     });
+  }
 
-    const ledgerForm = document.getElementById('ledgerForm');
-    if (ledgerForm) {
-      ledgerForm.addEventListener('submit', async (ev) => {
-        ev.preventDefault();
-        const status = document.getElementById('ledgerStatus');
-        if (status) status.textContent = '';
+  // Ledger form (Money tab)
+  const ledgerForm = document.getElementById('ledgerForm');
+  if (ledgerForm) {
+    // Default date to today so the date picker is visible and usable by default.
+    const ledgerDateEl = document.getElementById('ledgerOccurredOn');
+    if (ledgerDateEl && !ledgerDateEl.value) {
+      ledgerDateEl.value = new Date().toISOString().slice(0, 10);
+    }
 
-        const text = String(document.getElementById('ledgerText')?.value || '').trim();
-        const type = String(document.getElementById('ledgerType')?.value || 'income').trim();
-        const occurredOn = String(document.getElementById('ledgerOccurredOn')?.value || '').trim();
-
-        if (!text) {
-          if (status) status.textContent = 'Enter a message first.';
-          return;
-        }
-
-        const parts = [text, `type:${type}`];
-        if (occurredOn) parts.push(occurredOn);
-        const textWithMeta = parts.join(' ').trim();
-
-        try {
-          const result = await fetchJson('/api/ledger', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ text: textWithMeta, source: 'web' }),
-          });
-          if (result?.ok === false) throw new Error(result?.error || 'Request failed');
-
-          if (status) status.textContent = 'Added.';
-          const textEl = document.getElementById('ledgerText');
-          if (textEl) textEl.value = '';
-          await refresh();
-        } catch (err) {
-          if (status) status.textContent = err?.message || String(err);
-        }
+    // Track which submit button was used (Add vs Subtract)
+    for (const b of ledgerForm.querySelectorAll('button[type="submit"][data-ledger-op]')) {
+      b.addEventListener('click', () => {
+        const op = String(b.getAttribute('data-ledger-op') || 'add');
+        const opEl = document.getElementById('ledgerOp');
+        if (opEl) opEl.value = op;
       });
     }
+
+    ledgerForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const status = document.getElementById('ledgerStatus');
+      if (status) status.textContent = '';
+
+  const submitBtns = Array.from(ledgerForm.querySelectorAll('button[type="submit"]'));
+  for (const b of submitBtns) b.disabled = true;
+
+      const text = String(document.getElementById('ledgerText')?.value || '').trim();
+      const type = String(document.getElementById('ledgerType')?.value || 'income').trim();
+      const occurredOn = String(document.getElementById('ledgerOccurredOn')?.value || '').trim();
+  const deduct = Boolean(document.getElementById('ledgerDeductFromChecking')?.checked);
+  const op = String(document.getElementById('ledgerOp')?.value || 'add'); // add | sub
+  const isSubtract = op === 'sub';
+
+      if (!text) {
+        if (status) status.textContent = 'Enter a message first.';
+        for (const b of submitBtns) b.disabled = false;
+        return;
+      }
+
+      // Add flow (existing): optionally also deduct from checking.
+      // Subtract flow: always represents money leaving checking (a debit).
+      // - For cc_payment: subtract always means debit checking.
+      // - For transfer/investment: subtract means withdraw from savings/investment back to checking
+      //   (we model it as a checking debit only per your request).
+      const shouldDeduct = !isSubtract && deduct && (type === 'transfer' || type === 'investment' || type === 'cc_payment');
+
+      // Special case: credit card bill payment.
+      // Per requested behavior: this is NOT a liability entry.
+    // We ALSO do not POST a primary ledger entry at all (backend doesn't support cc_payment).
+    // CC payment is always a checking debit when using Subtract.
+      const isCcPayment = type === 'cc_payment';
+
+  const parts = [text, `type:${type}`];
+      if (occurredOn) parts.push(occurredOn);
+      const textWithMeta = parts.join(' ').trim();
+
+      try {
+        if (isSubtract) {
+          // SUBTRACT creates a debit in the selected bucket:
+          // - cc_payment => checking debit
+          // - savings transfer => subtract from savings
+          // - investment => subtract from investments
+          let amt = NaN;
+          const m2 = String(text).match(/-?\d+(?:\.\d+)?/);
+          if (m2) amt = Math.abs(Number(m2[0]));
+          if (!Number.isFinite(amt) || amt <= 0) {
+            const amountStr = prompt('How much should be subtracted from checking?', '');
+            if (amountStr != null) {
+              const cleaned = String(amountStr).replace(/[^0-9.-]+/g, '');
+              const parsed = Number(cleaned);
+              if (Number.isFinite(parsed)) amt = Math.abs(parsed);
+            }
+          }
+          if (!Number.isFinite(amt) || amt <= 0) throw new Error('Amount is required.');
+
+          const negAmt = 0 - Number(amt);
+
+          let outText = '';
+          if (type === 'cc_payment') {
+            // cc_payment is checking-only.
+            outText = `${negAmt} type:income account:checking note:subtract_for_${type}`;
+          } else if (type === 'transfer') {
+            // Savings withdrawal: a negative transfer reduces the savings bucket.
+            outText = `${negAmt} type:transfer note:subtract_for_${type}`;
+          } else if (type === 'investment') {
+            // Investment withdrawal: a negative investment reduces the investment bucket.
+            outText = `${negAmt} type:investment note:subtract_for_${type}`;
+          } else if (type === 'income') {
+            // Rare, but allow subtracting income as a checking debit.
+            outText = `${negAmt} type:income account:checking note:subtract_for_${type}`;
+          } else if (type === 'liability') {
+            // Subtracting a liability reduces liabilities.
+            outText = `${negAmt} type:liability note:subtract_for_${type}`;
+          } else {
+            // Fallback: treat as checking debit.
+            outText = `${negAmt} type:income account:checking note:subtract_for_${type}`;
+          }
+
+          // Extra guardrail: never allow a subtract action to submit a non-negative amount.
+          if (!/^\s*-\d/.test(outText)) throw new Error('Subtract must create a negative amount.');
+
+          const outParts = [outText];
+          if (occurredOn) outParts.push(occurredOn);
+          const out = await fetchJson('/api/ledger', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: outParts.join(' ').trim(), source: 'web' }),
+          });
+          if (out?.ok === false) throw new Error(out?.error || 'Subtract failed');
+        } else {
+          // ADD behaves like before: post the primary entry, and optionally post a matching checking deduction.
+          if (!isCcPayment) {
+            const result = await fetchJson('/api/ledger', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: textWithMeta, source: 'web' }),
+            });
+            if (result?.ok === false) throw new Error(result?.error || 'Request failed');
+          }
+
+          if (shouldDeduct) {
+          // Create a matching negative entry in checking.
+          // We prompt for amount so we can reliably create a negative ledger amount.
+          // For cc payments, derive the amount directly from the message.
+          // For transfer/investment, we still prompt (since the text could be complex).
+          let amt = NaN;
+          if (isCcPayment) {
+            const m2 = String(text).match(/-?\d+(?:\.\d+)?/);
+            if (m2) amt = Math.abs(Number(m2[0]));
+          }
+          if (!Number.isFinite(amt) || amt <= 0) {
+            const amountStr = prompt('How much should be deducted from checking?', '');
+            if (amountStr != null) {
+              // Guard against commas/currency symbols/spaces.
+              const cleaned = String(amountStr).replace(/[^0-9.-]+/g, '');
+              const parsed = Number(cleaned);
+              if (Number.isFinite(parsed)) amt = Math.abs(parsed);
+            }
+          }
+          if (Number.isFinite(amt) && amt > 0) {
+            // IMPORTANT: build the negative amount using numeric subtraction so we don't
+            // accidentally end up doing string math anywhere downstream.
+            const negAmt = 0 - Number(amt);
+            const outText = `${negAmt} type:income account:checking note:deduct_for_${type}`;
+            const outParts = [outText];
+            if (occurredOn) outParts.push(occurredOn);
+            const out = await fetchJson('/api/ledger', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: outParts.join(' ').trim(), source: 'web' }),
+            });
+            if (out?.ok === false) throw new Error(out?.error || 'Deduction failed');
+          }
+          }
+        }
+
+  if (status) status.textContent = isSubtract ? 'Subtracted.' : 'Added.';
+        const textEl = document.getElementById('ledgerText');
+        if (textEl) textEl.value = '';
+        // Keep the selected date (don't wipe it) so repeated entries are quick.
+        await refresh();
+        await refreshMoneyLedger();
+      } catch (err) {
+        if (status) status.textContent = err?.message || String(err);
+      } finally {
+        for (const b of submitBtns) b.disabled = false;
+      }
+    });
   }
 
   // Money is a full tab now, so money tools are always visible inside that panel.
@@ -2137,41 +2603,41 @@ function wireEvents() {
 }
 
 renderShell();
-  
-  // Tabs
-  const tabSummary = document.getElementById('tabSummary');
-  const tabExpenses = document.getElementById('tabExpenses');
-  const tabMoney = document.getElementById('tabMoney');
-  const tabSettings = document.getElementById('tabSettings');
-  const panelSummary = document.getElementById('panelSummary');
-  const panelExpenses = document.getElementById('panelExpenses');
-  const panelMoney = document.getElementById('panelMoney');
-  const panelSettings = document.getElementById('panelSettings');
-  
-  const setActive = (which) => {
-    if (panelSummary) panelSummary.style.display = which === 'summary' ? 'block' : 'none';
-    if (panelExpenses) panelExpenses.style.display = which === 'expenses' ? 'block' : 'none';
-    if (panelMoney) panelMoney.style.display = which === 'money' ? 'block' : 'none';
-    if (panelSettings) panelSettings.style.display = which === 'settings' ? 'block' : 'none';
 
-    for (const [btn, name] of [
-      [tabSummary, 'summary'],
-      [tabExpenses, 'expenses'],
-      [tabMoney, 'money'],
-      [tabSettings, 'settings'],
-    ]) {
-      if (!btn) continue;
-      if (which === name) btn.classList.add('active');
-      else btn.classList.remove('active');
-    }
-  };
-  
-  if (tabSummary) tabSummary.onclick = () => setActive('summary');
-  if (tabExpenses) tabExpenses.onclick = () => setActive('expenses');
-  if (tabMoney) tabMoney.onclick = () => setActive('money');
-  if (tabSettings) tabSettings.onclick = () => setActive('settings');
-  
-  // Default tab
-  setActive('summary');
+// Tabs
+const tabSummary = document.getElementById('tabSummary');
+const tabExpenses = document.getElementById('tabExpenses');
+const tabMoney = document.getElementById('tabMoney');
+const tabSettings = document.getElementById('tabSettings');
+const panelSummary = document.getElementById('panelSummary');
+const panelExpenses = document.getElementById('panelExpenses');
+const panelMoney = document.getElementById('panelMoney');
+const panelSettings = document.getElementById('panelSettings');
+
+const setActive = (which) => {
+  if (panelSummary) panelSummary.style.display = which === 'summary' ? 'block' : 'none';
+  if (panelExpenses) panelExpenses.style.display = which === 'expenses' ? 'block' : 'none';
+  if (panelMoney) panelMoney.style.display = which === 'money' ? 'block' : 'none';
+  if (panelSettings) panelSettings.style.display = which === 'settings' ? 'block' : 'none';
+
+  for (const [btn, name] of [
+    [tabSummary, 'summary'],
+    [tabExpenses, 'expenses'],
+    [tabMoney, 'money'],
+    [tabSettings, 'settings'],
+  ]) {
+    if (!btn) continue;
+    if (which === name) btn.classList.add('active');
+    else btn.classList.remove('active');
+  }
+};
+
+if (tabSummary) tabSummary.onclick = () => setActive('summary');
+if (tabExpenses) tabExpenses.onclick = () => setActive('expenses');
+if (tabMoney) tabMoney.onclick = () => setActive('money');
+if (tabSettings) tabSettings.onclick = () => setActive('settings');
+
+// Default tab
+setActive('summary');
 wireEvents();
-refresh();
+refreshMoneyLedger();

@@ -402,10 +402,18 @@ export function parseExpenseMessage(textRaw: string): ParsedExpense | null {
   const match = text.match(/(?:\$|usd\s*)?([0-9]+(?:,[0-9]{3})*)(?:\.(\d{1,2}))?/i);
   if (!match) return null;
 
+  // Preserve sign for ledger-style entries like "-500 type:income ...".
+  // We intentionally only treat it as negative when it's a true prefix directly
+  // before the numeric token (ignoring whitespace).
+  const matchIndex = match.index ?? 0;
+  const prefix = text.slice(0, matchIndex);
+  const isNegative = /-\s*$/.test(prefix);
+
   const intPart = match[1].replace(/,/g, '');
   const decPart = match[2];
-  const amount = Number(decPart ? `${intPart}.${decPart}` : intPart);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const magnitude = Number(decPart ? `${intPart}.${decPart}` : intPart);
+  const amount = (isNegative ? -1 : 1) * magnitude;
+  if (!Number.isFinite(amount) || amount === 0) return null;
 
   const before = text.slice(0, match.index ?? 0).trim();
   const after = text.slice((match.index ?? 0) + match[0].length).trim();

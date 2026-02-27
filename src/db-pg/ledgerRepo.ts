@@ -10,7 +10,7 @@ export type LedgerEntry = {
   source: string;
   fromUser: string | null;
   rawText: string;
-  type: 'expense' | 'income' | 'transfer' | 'investment' | 'liability' | 'receivable';
+  type: 'expense' | 'income' | 'transfer' | 'investment' | 'liability' | 'receivable' | 'cc';
   amount: number;
   currency: string;
   direction: 'i_lent' | 'i_borrowed' | 'repay' | 'collect' | null;
@@ -215,4 +215,93 @@ export async function getLedgerTotals(args: { currency: string }): Promise<{
     investmentTotal: Number(res.rows[0].investment_total),
     liabilityTotal: Number(res.rows[0].liability_total),
   };
+}
+
+export async function updateLedgerEntry(args: {
+  id: string;
+  occurredOn?: string;
+  rawText?: string;
+  type?: LedgerEntry['type'];
+  amount?: number;
+  currency?: string;
+  direction?: LedgerEntry['direction'];
+  counterparty?: string | null;
+  account?: string | null;
+  asset?: string | null;
+  liability?: string | null;
+  note?: string | null;
+}): Promise<LedgerEntry | null> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const existing = await pool.query(
+    `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
+        type, amount, currency, direction, counterparty, account, asset, liability, note
+     FROM ledger_entries
+     WHERE id = $1`,
+    [args.id]
+  );
+  if (!existing.rows[0]) return null;
+
+  const cur = existing.rows[0];
+  const occurredOn = args.occurredOn ?? toYmd(cur.occurred_on);
+  const rawText = args.rawText ?? cur.raw_text;
+  const type = args.type ?? cur.type;
+  const amount = Number.isFinite(args.amount) ? args.amount : Number(cur.amount);
+  const currency = args.currency ?? cur.currency;
+  const direction = args.direction === undefined ? cur.direction : args.direction;
+  const counterparty = args.counterparty === undefined ? cur.counterparty : args.counterparty;
+  const account = args.account === undefined ? cur.account : args.account;
+  const asset = args.asset === undefined ? cur.asset : args.asset;
+  const liability = args.liability === undefined ? cur.liability : args.liability;
+  const note = args.note === undefined ? cur.note : args.note;
+
+  const row = await pool.query(
+    `UPDATE ledger_entries
+     SET occurred_on=$2, raw_text=$3, type=$4, amount=$5, currency=$6,
+         direction=$7, counterparty=$8, account=$9, asset=$10, liability=$11, note=$12
+     WHERE id=$1
+     RETURNING id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
+        type, amount, currency, direction, counterparty, account, asset, liability, note`,
+    [
+      args.id,
+      occurredOn,
+      rawText,
+      type,
+      amount,
+      currency,
+      direction ?? null,
+      counterparty ?? null,
+      account ?? null,
+      asset ?? null,
+      liability ?? null,
+      note ?? null,
+    ]
+  );
+
+  const r = row.rows[0];
+  return {
+    id: r.id,
+    createdAt: new Date(r.created_at).toISOString(),
+    occurredOn: toYmd(r.occurred_on),
+    source: r.source,
+    fromUser: r.from_user,
+    rawText: r.raw_text,
+    type: r.type,
+    amount: Number(r.amount),
+    currency: r.currency,
+    direction: r.direction,
+    counterparty: r.counterparty,
+    account: r.account,
+    asset: r.asset,
+    liability: r.liability,
+    note: r.note,
+  };
+}
+
+export async function deleteLedgerEntry(args: { id: string }): Promise<boolean> {
+  await ensureSchema();
+  const pool = getPool();
+  const res = await pool.query(`DELETE FROM ledger_entries WHERE id = $1`, [args.id]);
+  return (res.rowCount ?? 0) > 0;
 }

@@ -220,6 +220,13 @@ button{
   cursor:pointer;
 }
 button:hover{background:rgba(124,92,255,.35)}
+.btn-secondary{
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.18);
+  color:rgba(231,236,255,.92);
+}
+.btn-secondary:hover{background:rgba(255,255,255,.08)}
+.btn-secondary:focus{outline:2px solid rgba(124,92,255,.35);outline-offset:2px}
 .status{min-height:18px;margin:.6rem 0 0;color:var(--muted)}
 .status.ok{color:#97ffce}
 .status.error{color:#ff9db5}

@@ -42,6 +42,13 @@ export async function insertExpense(args: {
   await ensureSchema();
   const pool = getPool();
 
+  // Card is required. This prevents the app from silently defaulting to a card
+  // (e.g., amex) when the user forgot to select one.
+  const card = (args.parsed.card ?? '').trim();
+  if (!card) {
+    throw new Error('Card is required');
+  }
+
   const id = crypto.randomUUID();
   const createdAt = new Date();
   const occurredOn = args.parsed.occurredOn ?? toIso(createdAt).slice(0, 10);
@@ -66,7 +73,7 @@ export async function insertExpense(args: {
       currency,
       args.parsed.category ?? null,
       args.parsed.note ?? null,
-      args.parsed.card ?? null,
+      card,
       args.parsed.paidBy ?? 'me',
       args.parsed.splitType ?? 'none',
       args.parsed.splitRatioMe ?? null,
@@ -226,6 +233,10 @@ export async function updateExpenseById(args: {
 }): Promise<Expense | null> {
   await ensureSchema();
   const pool = getPool();
+
+  if (args.card != null && String(args.card).trim() === '') {
+    throw new Error('Card is required');
+  }
 
   const row = await pool.query(
     `UPDATE expenses

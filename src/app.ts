@@ -22,7 +22,14 @@ import {
   listReimbursements,
   listOtherParties,
 } from './db-pg/reimbursementsRepo.js';
-import { insertLedgerEntry, listLedgerEntries, getLedgerTotals, getReceivableBalances } from './db-pg/ledgerRepo.js';
+import {
+  insertLedgerEntry,
+  listLedgerEntries,
+  getLedgerTotals,
+  getReceivableBalances,
+  updateLedgerEntry,
+  deleteLedgerEntry,
+} from './db-pg/ledgerRepo.js';
 
 const CURRENCY = process.env.CURRENCY ?? 'USD';
 const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -250,13 +257,20 @@ app.post('/api/ingest-message', async (req: Request, res: Response) => {
     parsed.myAmount = 0;
   }
 
-  const expense = await insertExpense({
-    text,
-    from,
-    source: source ?? 'message',
-    parsed,
-    defaultCurrency: CURRENCY,
-  });
+  let expense;
+  try {
+    expense = await insertExpense({
+      text,
+      from,
+      source: source ?? 'message',
+      parsed,
+      defaultCurrency: CURRENCY,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/card is required/i.test(msg)) return res.status(400).json({ ok: false, error: 'Card is required' });
+    throw e;
+  }
 
   // Option B: keep the full expense amount as your spend, and track split reimbursements separately.
   // If `paidBy=me` and split applies, roommate owes you their share.
@@ -453,20 +467,27 @@ app.put('/api/expenses/:id', async (req: Request, res: Response) => {
   const paidBy = parsed.paidBy ?? 'me';
   const splitType = parsed.splitType ?? 'none';
 
-  const updated = await updateExpenseById({
-    id,
-    occurredOn: parsed.occurredOn,
-    amount: parsed.amount,
-    myAmount: parsed.myAmount ?? parsed.amount,
-    category: parsed.category ?? null,
-    note: parsed.note ?? null,
-    card: parsed.card ?? null,
-    paidBy,
-    splitType,
-    splitRatioMe: parsed.splitRatioMe ?? null,
-    splitRatioOther: parsed.splitRatioOther ?? null,
-    otherParty,
-  });
+  let updated;
+  try {
+    updated = await updateExpenseById({
+      id,
+      occurredOn: parsed.occurredOn,
+      amount: parsed.amount,
+      myAmount: parsed.myAmount ?? parsed.amount,
+      category: parsed.category ?? null,
+      note: parsed.note ?? null,
+      card: parsed.card ?? null,
+      paidBy,
+      splitType,
+      splitRatioMe: parsed.splitRatioMe ?? null,
+      splitRatioOther: parsed.splitRatioOther ?? null,
+      otherParty,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/card is required/i.test(msg)) return res.status(400).json({ ok: false, error: 'Card is required' });
+    throw e;
+  }
 
   if (!updated) return res.status(404).json({ ok: false, error: 'Not found' });
 
@@ -585,7 +606,7 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
   const ledgerTotals = await getLedgerTotals({ currency: CURRENCY });
   const receivables = await getReceivableBalances({ currency: CURRENCY });
 
-  const netWorth = ledgerTotals.incomeTotal - (allTime.total + ledgerTotals.savingsTotal + ledgerTotals.investmentTotal + ledgerTotals.liabilityTotal);
+  const netWorth = ledgerTotals.incomeTotal - (ledgerTotals.savingsTotal + ledgerTotals.investmentTotal + ledgerTotals.liabilityTotal);
 
   return res.json({
     ok: true,
@@ -614,6 +635,22 @@ app.post('/api/ledger', async (req: Request, res: Response) => {
 
   const parsed = parseExpenseMessage(text);
   if (!parsed) return res.status(400).json({ ok: false, error: 'Could not parse amount from message' });
+
+  if (process.env.LEDGER_DEBUG === '1') {
+    // eslint-disable-next-line no-console
+    console.log('[ledger] raw:', { text });
+    // eslint-disable-next-line no-console
+    console.log('[ledger] parsed:', {
+      amount: parsed.amount,
+      type: parsed.type,
+      account: parsed.account,
+      currency: parsed.currency,
+      note: parsed.note,
+      occurredOn: parsed.occurredOn,
+      direction: (parsed as any).direction,
+      counterparty: (parsed as any).counterparty,
+    });
+  }
 
   const type = parsed.type ?? 'income';
   const allowed = new Set(['income', 'transfer', 'investment', 'liability', 'receivable']);
@@ -655,6 +692,47 @@ app.get('/api/ledger', async (req: Request, res: Response) => {
 
   const entries = await listLedgerEntries({ limit, from: fromYmd, to: toYmd, type: t });
   res.json({ ok: true, entries, currency: CURRENCY, from: fromYmd, to: toYmd, type: t ?? '' });
+});
+
+app.patch('/api/ledger/:id', async (req: Request, res: Response) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ ok: false, error: 'Missing id' });
+
+  const body = req.body ?? {};
+
+  const allowed = new Set(['income', 'transfer', 'investment', 'liability', 'receivable']);
+  const type = typeof body.type === 'string' && allowed.has(body.type) ? (body.type as any) : undefined;
+
+  const amount = body.amount === undefined ? undefined : Number(body.amount);
+  if (body.amount !== undefined && !Number.isFinite(amount)) {
+    return res.status(400).json({ ok: false, error: 'Invalid amount' });
+  }
+
+  const entry = await updateLedgerEntry({
+    id,
+    occurredOn: typeof body.occurredOn === 'string' ? body.occurredOn : undefined,
+    rawText: typeof body.rawText === 'string' ? body.rawText : undefined,
+    type,
+    amount,
+    currency: typeof body.currency === 'string' ? body.currency : undefined,
+    account: typeof body.account === 'string' ? body.account : body.account === null ? null : undefined,
+    asset: typeof body.asset === 'string' ? body.asset : body.asset === null ? null : undefined,
+    liability: typeof body.liability === 'string' ? body.liability : body.liability === null ? null : undefined,
+    note: typeof body.note === 'string' ? body.note : body.note === null ? null : undefined,
+    counterparty: typeof body.counterparty === 'string' ? body.counterparty : body.counterparty === null ? null : undefined,
+    direction: typeof body.direction === 'string' ? (body.direction as any) : undefined,
+  });
+
+  if (!entry) return res.status(404).json({ ok: false, error: 'Not found' });
+  return res.json({ ok: true, entry });
+});
+
+app.delete('/api/ledger/:id', async (req: Request, res: Response) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ ok: false, error: 'Missing id' });
+  const ok = await deleteLedgerEntry({ id });
+  if (!ok) return res.status(404).json({ ok: false, error: 'Not found' });
+  return res.json({ ok: true });
 });
 
 app.get('/api/reimbursements', async (req: Request, res: Response) => {
