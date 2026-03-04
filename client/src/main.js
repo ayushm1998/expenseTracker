@@ -48,6 +48,34 @@ async function fetchJsonOrThrow(url, options) {
   return res;
 }
 
+async function createCheckingDeductionForExpense({ amount, currency, occurredOn, note }) {
+  // Create a matching negative checking entry so debit-card spending reduces checking balance.
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return;
+  const ymd = String(occurredOn || '').trim();
+  const suffix = ymd ? ` ${ymd}` : '';
+  const entryText = `${0 - n} type:income account:checking note:${String(note || 'expense_debit').trim()}${suffix}`;
+  await fetchJsonOrThrow('/api/ledger', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: entryText, source: 'web' }),
+  });
+}
+
+async function createSavingsDeductionForExpense({ amount, currency, occurredOn, note }) {
+  // Create a matching negative savings entry so debit-card spending reduces savings balance.
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return;
+  const ymd = String(occurredOn || '').trim();
+  const suffix = ymd ? ` ${ymd}` : '';
+  const entryText = `${0 - n} type:transfer account:savings note:${String(note || 'expense_debit').trim()}${suffix}`;
+  await fetchJsonOrThrow('/api/ledger', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: entryText, source: 'web' }),
+  });
+}
+
 function buildEditTextFromForm(baseText, opts) {
   const cleaned = String(baseText || '').trim();
   const tokens = [];
@@ -516,10 +544,32 @@ async function updateExpense(id, payload) {
   });
 }
 
+// Track which tab is currently active so we can do targeted refreshes.
+let activeTab = 'summary';
+
+async function refreshExpenses() {
+  // Refresh only expense-related data (Expenses tab + Summary tab).
+  await refresh();
+}
+
+async function refreshMoney() {
+  // Refresh only money-related data (Money tab + shared receivables/net-worth).
+  await refreshMoneyLedger();
+}
+
+async function refreshCurrentTab() {
+  if (activeTab === 'money') {
+    await refreshMoney();
+  } else {
+    // Summary and Expenses share the same data; refresh both.
+    await refreshExpenses();
+  }
+}
+
 async function refreshAll() {
-  // Keep it simple: re-run the main loader by reloading.
-  // (This codebase renders lots of derived UI in one pass.)
-  window.location.reload();
+  // Refresh all data without a full page reload.
+  await refresh();
+  await refreshMoneyLedger();
 }
 
 function renderPieChart(buckets, currency) {
@@ -600,6 +650,7 @@ function renderShell() {
       <section class="card">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <div style="font-weight:800;">Money</div>
+          <button type="button" class="refresh-btn" id="refreshMoney" title="Refresh Money tab">↻</button>
         </div>
         <div id="moneyTools" style="margin-top:10px;">
           <form id="ledgerForm" class="form">
@@ -691,6 +742,7 @@ function renderShell() {
       <section class="card">
         <div class="row" style="justify-content:space-between;align-items:center;">
           <div style="font-weight:800;">Settings</div>
+          <button type="button" class="refresh-btn" id="refreshSettings" title="Refresh Settings tab">↻</button>
         </div>
 
         <div style="margin-top:12px;" class="muted">
@@ -740,6 +792,10 @@ function renderShell() {
 
       <div id="panelExpenses" style="display:none;">
       <section class="card">
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="font-weight:800;">Add Expense</div>
+          <button type="button" class="refresh-btn" id="refreshExpenses" title="Refresh Expenses tab">↻</button>
+        </div>
         <form id="ingestForm" class="form">
           <label for="text">Message</label>
           <input id="text" name="text" type="text" autocomplete="off" placeholder="e.g. food 250 chai" required />
@@ -754,6 +810,8 @@ function renderShell() {
               <option value="bofa-debit">BoFA Debit</option>
               <option value="chase">Chase</option>
               <option value="zolve">Zolve</option>
+              <option value="zolve-debit">Zolve Debit</option>
+              <option value="amazon">Amazon Card</option>
               <option value="cash">Cash</option>
               <option value="other">Other</option>
             </select>
@@ -838,6 +896,8 @@ function renderShell() {
               <option value="bofa-debit">BoFA Debit</option>
               <option value="chase">Chase</option>
               <option value="zolve">Zolve</option>
+              <option value="zolve-debit">Zolve Debit</option>
+              <option value="amazon">Amazon Card</option>
               <option value="cash">Cash</option>
               <option value="other">Other</option>
               <option value="none">No card</option>
@@ -856,6 +916,7 @@ function renderShell() {
           <div class="card-head">
             <h2>Summary</h2>
             <div class="card-head-right">
+              <button type="button" class="refresh-btn" id="refreshSummary" title="Refresh Summary tab">↻</button>
               <select id="summaryCard" name="summaryCard" aria-label="Card for summary">
                 <option value="">All cards</option>
                 <option value="amex">Amex</option>
@@ -865,6 +926,8 @@ function renderShell() {
                 <option value="bofa-debit">BoFA Debit</option>
                 <option value="chase">Chase</option>
                 <option value="zolve">Zolve</option>
+                <option value="zolve-debit">Zolve Debit</option>
+                <option value="amazon">Amazon Card</option>
                 <option value="cash">Cash</option>
                 <option value="other">Other</option>
                 <option value="none">No card</option>
@@ -973,6 +1036,8 @@ function renderShell() {
                 <option value="bofa-debit">BoFA Debit</option>
                 <option value="chase">Chase</option>
                 <option value="zolve">Zolve</option>
+                <option value="zolve-debit">Zolve Debit</option>
+                <option value="amazon">Amazon Card</option>
                 <option value="cash">Cash</option>
                 <option value="other">Other</option>
               </select>
@@ -1171,7 +1236,6 @@ async function refreshMoneyLedger() {
             if (!confirm('Delete this ledger entry?')) return;
             const r = await fetchJsonOrThrow(`/api/ledger/${id}`, { method: 'DELETE' });
             if (r?.ok === false) throw new Error(r?.error || 'Delete failed');
-            await refresh();
             await refreshMoneyLedger();
           });
         }
@@ -1217,7 +1281,6 @@ async function refreshMoneyLedger() {
               }),
             });
             if (r?.ok === false) throw new Error(r?.error || 'Update failed');
-            await refresh();
             await refreshMoneyLedger();
           });
         }
@@ -2326,6 +2389,34 @@ function wireEvents() {
       return;
     }
 
+    // If BoFA Debit was used, also deduct from checking in Money via a matching negative ledger entry.
+    try {
+      if (String(card || '').trim() === 'bofa-debit') {
+        const exp = result?.expense;
+        const amount = Number(exp?.amount ?? exp?.myAmount ?? exp?.my_amount ?? NaN);
+        const ymd = String(exp?.occurredOn || occurredOn || '').trim();
+        await createCheckingDeductionForExpense({
+          amount,
+          currency: String(exp?.currency || result?.ack?.currency || 'USD'),
+          occurredOn: ymd,
+          note: 'expense_bofa_debit',
+        });
+      }
+      if (String(card || '').trim() === 'zolve-debit') {
+        const exp = result?.expense;
+        const amount = Number(exp?.amount ?? exp?.myAmount ?? exp?.my_amount ?? NaN);
+        const ymd = String(exp?.occurredOn || occurredOn || '').trim();
+        await createSavingsDeductionForExpense({
+          amount,
+          currency: String(exp?.currency || result?.ack?.currency || 'USD'),
+          occurredOn: ymd,
+          note: 'expense_zolve_debit',
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to create BoFA Debit checking deduction', e);
+    }
+
     // The API ack message always references the full amount; for split expenses,
     // users usually care about "my share". If server returned myAmount, show it.
     {
@@ -2442,6 +2533,7 @@ function wireEvents() {
           // - cc_payment => checking debit
           // - savings transfer => subtract from savings
           // - investment => subtract from investments
+          // - liability => subtract from liabilities AND debit checking (cash out to pay it)
           let amt = NaN;
           const m2 = String(text).match(/-?\d+(?:\.\d+)?/);
           if (m2) amt = Math.abs(Number(m2[0]));
@@ -2489,6 +2581,19 @@ function wireEvents() {
             body: JSON.stringify({ text: outParts.join(' ').trim(), source: 'web' }),
           });
           if (out?.ok === false) throw new Error(out?.error || 'Subtract failed');
+
+          // If we paid down a liability, also debit checking for the same amount (cash out).
+          if (type === 'liability') {
+            const chkNeg = `${negAmt} type:income account:checking note:deduct_for_${type}`;
+            const chkParts = [chkNeg];
+            if (occurredOn) chkParts.push(occurredOn);
+            const chkOut = await fetchJson('/api/ledger', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: chkParts.join(' ').trim(), source: 'web' }),
+            });
+            if (chkOut?.ok === false) throw new Error(chkOut?.error || 'Checking deduction failed');
+          }
         } else {
           // ADD behaves like before: post the primary entry, and optionally post a matching checking deduction.
           if (!isCcPayment) {
@@ -2540,7 +2645,6 @@ function wireEvents() {
         const textEl = document.getElementById('ledgerText');
         if (textEl) textEl.value = '';
         // Keep the selected date (don't wipe it) so repeated entries are quick.
-        await refresh();
         await refreshMoneyLedger();
       } catch (err) {
         if (status) status.textContent = err?.message || String(err);
@@ -2561,7 +2665,7 @@ function wireEvents() {
 
       const action = String(document.getElementById('recvAction')?.value || 'took');
       const person = String(document.getElementById('recvPerson')?.value || '').trim();
-      const amount = String(document.getElementById('recvAmount')?.value || '').trim();
+  const amount = String(document.getElementById('recvAmount')?.value || '').trim();
 
       if (!person) {
         if (status) status.textContent = 'Enter a person.';
@@ -2587,14 +2691,31 @@ function wireEvents() {
       const msg = `${m.verb} ${amount} receivable type:receivable counterparty:${nicePersonLabel(person)} direction:${m.dir}`;
 
       try {
-        const result = await fetchJson('/api/ledger', {
+        // Normalize amount to a strict positive number (strip commas/currency symbols).
+  const amtClean = amount.replace(/[^0-9.\-]+/g, '');
+        const amtNum = Math.abs(Number(amtClean));
+        if (!Number.isFinite(amtNum) || amtNum <= 0) throw new Error('Enter a valid positive amount.');
+
+        // Strict: create both entries together. For repay, post checking debit first; if it fails, skip receivable update.
+        if (m.dir === 'repay') {
+          const negAmt = 0 - amtNum;
+          const chkText = `${negAmt} type:income account:checking note:deduct_for_repay`;
+
+          await fetchJsonOrThrow('/api/ledger', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: chkText, source: 'web' }),
+          });
+        }
+
+        await fetchJsonOrThrow('/api/ledger', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ text: msg, source: 'web' }),
         });
-        if (result?.ok === false) throw new Error(result?.error || 'Request failed');
+
         if (status) status.textContent = 'Added.';
-        await refresh();
+        await refreshMoneyLedger();
       } catch (err) {
         if (status) status.textContent = err?.message || String(err);
       }
@@ -2615,6 +2736,7 @@ const panelMoney = document.getElementById('panelMoney');
 const panelSettings = document.getElementById('panelSettings');
 
 const setActive = (which) => {
+  activeTab = which;
   if (panelSummary) panelSummary.style.display = which === 'summary' ? 'block' : 'none';
   if (panelExpenses) panelExpenses.style.display = which === 'expenses' ? 'block' : 'none';
   if (panelMoney) panelMoney.style.display = which === 'money' ? 'block' : 'none';
@@ -2641,3 +2763,21 @@ if (tabSettings) tabSettings.onclick = () => setActive('settings');
 setActive('summary');
 wireEvents();
 refreshMoneyLedger();
+
+// Wire per-tab refresh buttons
+const spinRefresh = async (btn, fn) => {
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  try { await fn(); } finally {
+    btn.classList.remove('spinning');
+    btn.disabled = false;
+  }
+};
+const rSummary = document.getElementById('refreshSummary');
+const rExpenses = document.getElementById('refreshExpenses');
+const rMoney = document.getElementById('refreshMoney');
+const rSettings = document.getElementById('refreshSettings');
+if (rSummary) rSummary.onclick = () => spinRefresh(rSummary, () => refresh());
+if (rExpenses) rExpenses.onclick = () => spinRefresh(rExpenses, () => refresh());
+if (rMoney) rMoney.onclick = () => spinRefresh(rMoney, () => refreshMoneyLedger());
+if (rSettings) rSettings.onclick = () => spinRefresh(rSettings, () => refresh());

@@ -272,6 +272,43 @@ app.post('/api/ingest-message', async (req: Request, res: Response) => {
     throw e;
   }
 
+  // Auto-mirror BoFA Debit spend into checking (debit) so Money balances stay accurate even if the UI helper is bypassed.
+  try {
+    const cardLower = String(parsed.card || '').trim().toLowerCase();
+    if (cardLower === 'bofa-debit') {
+      const amt = Number(expense.amount);
+      if (Number.isFinite(amt) && amt > 0) {
+        await insertLedgerEntry({
+          amount: 0 - amt,
+          currency: expense.currency,
+          type: 'income', // income bucket feeds checking; negative amount debits it
+          occurredOn: expense.occurredOn,
+          source: expense.source,
+          rawText: text,
+          account: 'checking',
+          note: 'expense_bofa_debit',
+        });
+      }
+    } else if (cardLower === 'zolve-debit') {
+      const amt = Number(expense.amount);
+      if (Number.isFinite(amt) && amt > 0) {
+        await insertLedgerEntry({
+          amount: 0 - amt,
+          currency: expense.currency,
+          type: 'transfer', // transfer bucket tracks savings; negative amount debits it
+          occurredOn: expense.occurredOn,
+          source: expense.source,
+          rawText: text,
+          account: 'savings',
+          note: 'expense_zolve_debit',
+        });
+      }
+    }
+  } catch (e) {
+    // Don't fail the expense creation if the mirror entry fails.
+    console.warn('BoFA Debit checking mirror failed', e);
+  }
+
   // Option B: keep the full expense amount as your spend, and track split reimbursements separately.
   // If `paidBy=me` and split applies, roommate owes you their share.
   // If `paidBy=roommate` and split applies, you owe roommate your share.
