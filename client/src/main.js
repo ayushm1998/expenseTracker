@@ -660,9 +660,15 @@ function renderShell() {
               <select id="ledgerType" name="ledgerType" aria-label="Ledger type">
                 <option value="income">Income</option>
                 <option value="transfer">Savings transfer</option>
+                <option value="transfer_india">Transfer to Savings India</option>
                 <option value="investment">Investment</option>
                 <option value="liability">Liability</option>
                 <option value="cc_payment">Credit card bill payment</option>
+              </select>
+              <select id="ledgerAccount" aria-label="Target account" title="Where should this money go?">
+                <option value="">Default account</option>
+                <option value="checking">Checking</option>
+                <option value="savings">Savings</option>
               </select>
               <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px;">
                 <label for="ledgerOccurredOn" class="muted" style="margin:0;font-size:12px;">Date</label>
@@ -697,6 +703,14 @@ function renderShell() {
               <input id="recvPerson" type="text" placeholder="Person (e.g. kevin)" class="grow" />
               <input id="recvAmount" type="number" placeholder="Amount" inputmode="decimal" />
               <button type="submit">Add</button>
+            </div>
+            <div class="row" id="recvDeductRow" style="display:none; margin-top:6px;">
+              <label class="muted" style="font-size:12px;">Deduct cash from</label>
+              <select id="recvDeductFrom" aria-label="Deduct from">
+                <option value="">Don't deduct</option>
+                <option value="checking">Checking</option>
+                <option value="savings">Savings</option>
+              </select>
             </div>
             <p id="recvStatus" class="status"></p>
           </form>
@@ -1160,6 +1174,9 @@ async function refreshMoneyLedger() {
     const currency = res?.currency || 'USD';
     const entries = Array.isArray(res?.entries) ? res.entries : [];
 
+  // Track total transferred to savings India (note:savings_india)
+  let savingsIndiaTotal = 0;
+
     // Account totals
     // Rules (simple + local-first):
     // - Income => increases an account; default account is checking.
@@ -1173,11 +1190,21 @@ async function refreshMoneyLedger() {
       investments: 0,
       liabilities: 0,
     };
+    let receivableAssets = 0;
+    let receivableLiabilities = 0;
 
     for (const e of entries) {
       const type = safeLower(e?.type);
+      const note = safeLower(e?.note || '');
       const amount = Number(e?.amount ?? 0);
       if (!Number.isFinite(amount) || amount === 0) continue;
+
+      const isSavingsIndia = type === 'transfer' && note.includes('savings_india');
+      if (isSavingsIndia) {
+        savingsIndiaTotal += amount;
+        // Do not include these in the standard savings bucket totals.
+        continue;
+      }
 
       const acct = safeLower(e?.account);
       const effAcct = acct || (type === 'income' ? 'checking' : '');
@@ -1206,20 +1233,34 @@ async function refreshMoneyLedger() {
       for (const key of Object.keys(window.__receivables)) {
         const bal = Number(window.__receivables[key]);
         if (!Number.isFinite(bal) || bal === 0) continue;
-        if (bal > 0) buckets.checking += bal;
-        else buckets.liabilities += Math.abs(bal);
+        if (bal > 0) receivableAssets += bal;
+        else receivableLiabilities += Math.abs(bal);
       }
     }
 
-    const netWorth = buckets.checking + buckets.savings + buckets.investments - buckets.liabilities;
+    const netWorth =
+      buckets.checking +
+      buckets.savings +
+      buckets.investments +
+      receivableAssets -
+      buckets.liabilities -
+      receivableLiabilities;
     if (acctEl) {
-      acctEl.textContent = `Checking: ${formatMoney(currency, buckets.checking)} · Savings: ${formatMoney(
-        currency,
-        buckets.savings
-      )} · Investments: ${formatMoney(currency, buckets.investments)} · Liabilities: ${formatMoney(
-        currency,
-        buckets.liabilities
-      )} · Net worth: ${formatMoney(currency, netWorth)}`;
+      const parts = [
+        `Checking: ${formatMoney(currency, buckets.checking)}`,
+        `Savings: ${formatMoney(currency, buckets.savings)}`,
+        `Investments: ${formatMoney(currency, buckets.investments)}`,
+        `Liabilities: ${formatMoney(currency, buckets.liabilities)}`,
+      ];
+
+      if (receivableAssets !== 0) parts.push(`Receivables owed to you: ${formatMoney(currency, receivableAssets)}`);
+      if (receivableLiabilities !== 0) parts.push(`Receivables you owe: ${formatMoney(currency, receivableLiabilities)}`);
+
+      parts.push(`Net worth: ${formatMoney(currency, netWorth)}`);
+      if (savingsIndiaTotal !== 0) {
+        parts.splice(2, 0, `Savings India: ${formatMoney(currency, savingsIndiaTotal)}`);
+      }
+      acctEl.textContent = parts.join(' · ');
     }
 
     if (listEl) {
@@ -2497,12 +2538,17 @@ function wireEvents() {
   const submitBtns = Array.from(ledgerForm.querySelectorAll('button[type="submit"]'));
   for (const b of submitBtns) b.disabled = true;
 
-      const text = String(document.getElementById('ledgerText')?.value || '').trim();
-      const type = String(document.getElementById('ledgerType')?.value || 'income').trim();
+  const text = String(document.getElementById('ledgerText')?.value || '').trim();
+  const rawType = String(document.getElementById('ledgerType')?.value || 'income').trim();
       const occurredOn = String(document.getElementById('ledgerOccurredOn')?.value || '').trim();
   const deduct = Boolean(document.getElementById('ledgerDeductFromChecking')?.checked);
+  const targetAccount = String(document.getElementById('ledgerAccount')?.value || '').trim();
   const op = String(document.getElementById('ledgerOp')?.value || 'add'); // add | sub
   const isSubtract = op === 'sub';
+
+  const isSavingsIndia = rawType === 'transfer_india';
+  const type = isSavingsIndia ? 'transfer' : rawType;
+  const extraNote = isSavingsIndia ? 'savings_india' : '';
 
       if (!text) {
         if (status) status.textContent = 'Enter a message first.';
@@ -2515,7 +2561,7 @@ function wireEvents() {
       // - For cc_payment: subtract always means debit checking.
       // - For transfer/investment: subtract means withdraw from savings/investment back to checking
       //   (we model it as a checking debit only per your request).
-      const shouldDeduct = !isSubtract && deduct && (type === 'transfer' || type === 'investment' || type === 'cc_payment');
+  const shouldDeduct = !isSubtract && deduct && (type === 'transfer' || type === 'investment' || type === 'cc_payment');
 
       // Special case: credit card bill payment.
       // Per requested behavior: this is NOT a liability entry.
@@ -2524,6 +2570,8 @@ function wireEvents() {
       const isCcPayment = type === 'cc_payment';
 
   const parts = [text, `type:${type}`];
+  if (targetAccount && !isSubtract) parts.push(`account:${targetAccount}`);
+  if (extraNote) parts.push(`note:${extraNote}`);
       if (occurredOn) parts.push(occurredOn);
       const textWithMeta = parts.join(' ').trim();
 
@@ -2552,22 +2600,23 @@ function wireEvents() {
           let outText = '';
           if (type === 'cc_payment') {
             // cc_payment is checking-only.
-            outText = `${negAmt} type:income account:checking note:subtract_for_${type}`;
+            outText = `${negAmt} type:income account:checking note:subtract_for_${type}${extraNote ? `_${extraNote}` : ''}`;
           } else if (type === 'transfer') {
             // Savings withdrawal: a negative transfer reduces the savings bucket.
-            outText = `${negAmt} type:transfer note:subtract_for_${type}`;
+            outText = `${negAmt} type:transfer note:subtract_for_${type}${extraNote ? `_${extraNote}` : ''}`;
           } else if (type === 'investment') {
             // Investment withdrawal: a negative investment reduces the investment bucket.
-            outText = `${negAmt} type:investment note:subtract_for_${type}`;
+            outText = `${negAmt} type:investment note:subtract_for_${type}${extraNote ? `_${extraNote}` : ''}`;
           } else if (type === 'income') {
             // Rare, but allow subtracting income as a checking debit.
-            outText = `${negAmt} type:income account:checking note:subtract_for_${type}`;
+            const acct = targetAccount || 'checking';
+            outText = `${negAmt} type:income account:${acct} note:subtract_for_${type}${extraNote ? `_${extraNote}` : ''}`;
           } else if (type === 'liability') {
             // Subtracting a liability reduces liabilities.
-            outText = `${negAmt} type:liability note:subtract_for_${type}`;
+            outText = `${negAmt} type:liability note:subtract_for_${type}${extraNote ? `_${extraNote}` : ''}`;
           } else {
             // Fallback: treat as checking debit.
-            outText = `${negAmt} type:income account:checking note:subtract_for_${type}`;
+            outText = `${negAmt} type:income account:checking note:subtract_for_${type}${extraNote ? `_${extraNote}` : ''}`;
           }
 
           // Extra guardrail: never allow a subtract action to submit a non-negative amount.
@@ -2584,7 +2633,7 @@ function wireEvents() {
 
           // If we paid down a liability, also debit checking for the same amount (cash out).
           if (type === 'liability') {
-            const chkNeg = `${negAmt} type:income account:checking note:deduct_for_${type}`;
+            const chkNeg = `${negAmt} type:income account:checking note:deduct_for_${type}${extraNote ? `_${extraNote}` : ''}`;
             const chkParts = [chkNeg];
             if (occurredOn) chkParts.push(occurredOn);
             const chkOut = await fetchJson('/api/ledger', {
@@ -2628,7 +2677,8 @@ function wireEvents() {
             // IMPORTANT: build the negative amount using numeric subtraction so we don't
             // accidentally end up doing string math anywhere downstream.
             const negAmt = 0 - Number(amt);
-            const outText = `${negAmt} type:income account:checking note:deduct_for_${type}`;
+            const acct = targetAccount || 'checking';
+            const outText = `${negAmt} type:income account:${acct} note:deduct_for_${type}${extraNote ? `_${extraNote}` : ''}`;
             const outParts = [outText];
             if (occurredOn) outParts.push(occurredOn);
             const out = await fetchJson('/api/ledger', {
@@ -2658,6 +2708,18 @@ function wireEvents() {
 
   const recvForm = document.getElementById('recvForm');
   if (recvForm) {
+    const recvActionEl = document.getElementById('recvAction');
+    const recvDeductRow = document.getElementById('recvDeductRow');
+    const recvDeductFromEl = document.getElementById('recvDeductFrom');
+
+    const syncRecvDeductVisibility = () => {
+      const action = String(recvActionEl?.value || 'took');
+      if (recvDeductRow) recvDeductRow.style.display = action === 'gave' ? 'flex' : 'none';
+      if (action !== 'gave' && recvDeductFromEl) recvDeductFromEl.value = '';
+    };
+    recvActionEl?.addEventListener('change', syncRecvDeductVisibility);
+    syncRecvDeductVisibility();
+
     recvForm.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const status = document.getElementById('recvStatus');
@@ -2666,6 +2728,7 @@ function wireEvents() {
       const action = String(document.getElementById('recvAction')?.value || 'took');
       const person = String(document.getElementById('recvPerson')?.value || '').trim();
   const amount = String(document.getElementById('recvAmount')?.value || '').trim();
+  let deductFrom = String(recvDeductFromEl?.value || '').trim();
 
       if (!person) {
         if (status) status.textContent = 'Enter a person.';
@@ -2706,6 +2769,32 @@ function wireEvents() {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ text: chkText, source: 'web' }),
           });
+        }
+
+        // When we collect (got back), also add cash to checking before updating receivables.
+        if (m.dir === 'collect') {
+          const chkText = `${amtNum} type:income account:checking note:collect_receivable`;
+          await fetchJsonOrThrow('/api/ledger', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: chkText, source: 'web' }),
+          });
+        }
+
+        // If we lent (gave) and user wants to deduct cash from checking/savings, post that debit first.
+        if (action === 'gave') {
+          // Default to checking unless user explicitly chose "Don't deduct".
+          if (!deductFrom) deductFrom = 'checking';
+
+          if (deductFrom === 'checking' || deductFrom === 'savings') {
+            const acct = deductFrom === 'savings' ? 'savings' : 'checking';
+            const chkText = `${0 - amtNum} type:income account:${acct} note:deduct_for_lend`;
+            await fetchJsonOrThrow('/api/ledger', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: chkText, source: 'web' }),
+            });
+          }
         }
 
         await fetchJsonOrThrow('/api/ledger', {
