@@ -217,6 +217,58 @@ export async function getLedgerTotals(args: { currency: string }): Promise<{
   };
 }
 
+export async function getSalaryTotal(args: { currency: string }): Promise<number> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const res = await pool.query(
+    `SELECT COALESCE(SUM(amount), 0)::text as total
+     FROM ledger_entries
+     WHERE currency = $1
+       AND type = 'income'
+       AND (
+         COALESCE(note, '') ILIKE $2 OR COALESCE(raw_text, '') ILIKE $2 OR
+         COALESCE(note, '') ILIKE $3 OR COALESCE(raw_text, '') ILIKE $3 OR
+         COALESCE(note, '') ILIKE $4 OR COALESCE(raw_text, '') ILIKE $4
+       )`,
+    [args.currency, '%salary%', '%paycheck%', '%payroll%']
+  );
+
+  return Number(res.rows[0].total);
+}
+
+export async function getSalaryByMonth(args: { currency: string; from?: string; to?: string }): Promise<Array<{ month: string; total: number }>> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const params: Array<string> = [args.currency, '%salary%', '%paycheck%', '%payroll%'];
+  let where = `currency = $1 AND type = 'income' AND (
+    COALESCE(note, '') ILIKE $2 OR COALESCE(raw_text, '') ILIKE $2 OR
+    COALESCE(note, '') ILIKE $3 OR COALESCE(raw_text, '') ILIKE $3 OR
+    COALESCE(note, '') ILIKE $4 OR COALESCE(raw_text, '') ILIKE $4
+  )`;
+
+  if (args.from) {
+    params.push(args.from);
+    where += ` AND occurred_on >= $${params.length}`;
+  }
+  if (args.to) {
+    params.push(args.to);
+    where += ` AND occurred_on <= $${params.length}`;
+  }
+
+  const res = await pool.query(
+    `SELECT to_char(occurred_on, 'YYYY-MM') as month, COALESCE(SUM(amount), 0)::text as total
+     FROM ledger_entries
+     WHERE ${where}
+     GROUP BY month
+     ORDER BY month DESC`,
+    params
+  );
+
+  return res.rows.map((r) => ({ month: r.month, total: Number(r.total) }));
+}
+
 export async function updateLedgerEntry(args: {
   id: string;
   occurredOn?: string;

@@ -26,6 +26,8 @@ import {
   insertLedgerEntry,
   listLedgerEntries,
   getLedgerTotals,
+  getSalaryTotal,
+  getSalaryByMonth,
   getReceivableBalances,
   updateLedgerEntry,
   deleteLedgerEntry,
@@ -632,11 +634,12 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
   const yearStart = new Date(now.getFullYear(), 0, 1);
   const yearStartYmd = yearStart.toISOString().slice(0, 10);
 
-  const [allTime, week, month, ytd] = await Promise.all([
+  const [allTime, week, month, ytd, salaryTotal] = await Promise.all([
     sumAllTime(),
     sumForRange({ from: weekStartYmd, toExclusive: tomorrowYmd }),
     sumForRange({ from: monthStartYmd, toExclusive: nextMonthStartYmd }),
     sumForRange({ from: yearStartYmd, toInclusive: todayYmd }),
+    getSalaryTotal({ currency: CURRENCY }),
   ]);
 
   const reimbursementBalance = await getReimbursementBalance({ currency: CURRENCY });
@@ -652,6 +655,7 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
     week,
     month,
     ytd,
+  salaryTotal,
     reimbursementBalance,
     ledger: {
       incomeTotal: ledgerTotals.incomeTotal,
@@ -662,6 +666,14 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
     },
     receivables,
   });
+});
+
+app.get('/api/salary', async (req: Request, res: Response) => {
+  const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
+  const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
+
+  const months = await getSalaryByMonth({ currency: CURRENCY, from: fromYmd, to: toYmd });
+  return res.json({ ok: true, currency: CURRENCY, months, from: fromYmd, to: toYmd });
 });
 
 // Ledger: earnings, savings transfers, investments, liabilities

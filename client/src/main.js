@@ -329,9 +329,18 @@ let selectedMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() 
 
 // Expenses tab: independent month picker (so Expenses isn't tied to Summary's month/range).
 let expensesMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-let expensesMonthMode = 'all'; // 'all' | 'month'
+let expensesMonthMode = 'all'; // 'all' | 'month' | 'custom'
+let expensesCustomFrom = '';
+let expensesCustomTo = '';
+let expensesCategoryFilter = '';
 
 function expensesMonthToQuery() {
+  if (expensesMonthMode === 'custom') {
+    return {
+      ...(expensesCustomFrom ? { from: expensesCustomFrom } : {}),
+      ...(expensesCustomTo ? { to: expensesCustomTo } : {}),
+    };
+  }
   if (expensesMonthMode !== 'month') return {};
   const [yStr, mStr] = String(expensesMonth || '').split('-');
   const y = Number(yStr);
@@ -430,7 +439,7 @@ function getRecentPeople() {
 function getConfig() {
   const defaults = {
     roommates: [],
-    paymentMethods: ['Amex', 'Citi', 'Apple Card', 'BofA', 'BoFA Debit', 'Chase', 'Zolve', 'Cash'],
+    paymentMethods: ['Amex', 'Citi', 'Apple Card', 'BofA', 'BoFA Debit', 'Chase', 'Amazon Chase', 'Zolve', 'Cash'],
   };
   try {
     const raw = JSON.parse(localStorage.getItem('appConfig') || 'null');
@@ -557,9 +566,52 @@ async function refreshMoney() {
   await refreshMoneyLedger();
 }
 
+let salaryRange = '12';
+
+async function refreshSalary() {
+  const listEl = document.getElementById('salaryList');
+  const totalEl = document.getElementById('salaryTotal');
+  if (listEl) listEl.innerHTML = '<div class="muted" style="font-size:12px;">Loading…</div>';
+
+  const resp = await fetchJson('/api/salary');
+  if (resp?.ok === false) throw new Error(resp?.error || 'Failed to load salary');
+
+  const currency = resp?.currency || 'USD';
+  let rows = Array.isArray(resp?.months) ? resp.months : [];
+  if (salaryRange !== 'all') rows = rows.slice(0, 12);
+
+  const total = rows.reduce((s, r) => s + Number(r.total || 0), 0);
+  if (totalEl) totalEl.textContent = rows.length ? `Total shown: ${formatMoney(currency, total)}` : '';
+
+  if (!rows.length) {
+    if (listEl) listEl.innerHTML = '<div class="muted" style="font-size:12px;">No salary entries yet.</div>';
+    return;
+  }
+
+  if (listEl) {
+    listEl.innerHTML = rows
+      .map((r) => {
+        const month = String(r.month || '').trim();
+        const amt = Number(r.total || 0);
+        return `
+          <div class="expense">
+            <div class="left">
+              <div class="primary">${escapeHtml(month)}</div>
+              <div class="secondary">Salary credited</div>
+            </div>
+            <div class="amt">${formatMoney(currency, amt)}</div>
+          </div>
+        `;
+      })
+      .join('');
+  }
+}
+
 async function refreshCurrentTab() {
   if (activeTab === 'money') {
     await refreshMoney();
+  } else if (activeTab === 'salary') {
+    await refreshSalary();
   } else {
     // Summary and Expenses share the same data; refresh both.
     await refreshExpenses();
@@ -641,7 +693,11 @@ function renderShell() {
             <button id="tabSummary" type="button" class="chip active">Summary</button>
             <button id="tabExpenses" type="button" class="chip">Expenses</button>
             <button id="tabMoney" type="button" class="chip">Money</button>
+            <button id="tabSalary" type="button" class="chip">Salary</button>
             <button id="tabSettings" type="button" class="chip">Settings</button>
+          </div>
+          <div class="row" style="gap:8px;">
+            <button id="resetFilters" type="button" class="chip">Reset filters</button>
           </div>
         </div>
       </nav>
@@ -804,6 +860,24 @@ function renderShell() {
       </section>
       </div>
 
+      <div id="panelSalary" style="display:none;">
+      <section class="card">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <div style="font-weight:800;">Salary</div>
+          <div class="row" style="gap:10px;align-items:center;">
+            <select id="salaryRange" aria-label="Salary range">
+              <option value="12">Last 12 months</option>
+              <option value="all">All time</option>
+            </select>
+            <button type="button" class="refresh-btn" id="refreshSalary" title="Refresh Salary tab">↻</button>
+          </div>
+        </div>
+        <div class="muted" style="margin-top:8px;font-size:12px;">Month-wise salary credited (income entries tagged salary/paycheck/payroll).</div>
+        <div class="muted" id="salaryTotal" style="margin-top:8px;font-size:12px;"></div>
+        <div id="salaryList" class="expenses" style="margin-top:10px;"></div>
+      </section>
+      </div>
+
       <div id="panelExpenses" style="display:none;">
       <section class="card">
         <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -893,13 +967,22 @@ function renderShell() {
               <select id="expensesMonthMode" aria-label="Expenses range">
                 <option value="all">All time</option>
                 <option value="month">Month</option>
+                <option value="custom">Custom</option>
               </select>
               <input id="expensesMonth" name="expensesMonth" type="month" aria-label="Expenses month" style="display:none;" />
+              <div id="expensesCustomRange" style="display:none;" class="row">
+                <input id="expensesCustomFrom" name="expensesCustomFrom" type="date" aria-label="Expenses from" />
+                <span class="muted" style="font-size:12px;">to</span>
+                <input id="expensesCustomTo" name="expensesCustomTo" type="date" aria-label="Expenses to" />
+              </div>
               <select id="expensesFilter" name="expensesFilter" aria-label="Expenses filter">
                 <option value="all">All</option>
                 <option value="split">Split only</option>
                 <option value="onlyMe">Only me</option>
                 <option value="roommatePaid">Roommate paid</option>
+              </select>
+              <select id="expensesCategoryFilter" name="expensesCategoryFilter" aria-label="Filter by category">
+                <option value="">All categories</option>
               </select>
               <select id="cardFilter" name="cardFilter" aria-label="Filter by card">
               <option value="">All cards</option>
@@ -919,6 +1002,8 @@ function renderShell() {
             </div>
           </div>
           <div id="expensesCardTotal" class="muted" style="margin-top:8px;font-size:12px;"></div>
+          <div id="expensesCategoryTotals" class="muted" style="margin-top:6px;font-size:12px;"></div>
+          <div id="expensesCategoryChart" style="margin-top:10px;"></div>
           <div id="expenses" class="expenses"></div>
         </div>
       </section>
@@ -1246,6 +1331,7 @@ async function refreshMoneyLedger() {
       buckets.liabilities -
       receivableLiabilities;
     if (acctEl) {
+      const salaryTotal = Number(window.__summary?.salaryTotal ?? 0);
       const parts = [
         `Checking: ${formatMoney(currency, buckets.checking)}`,
         `Savings: ${formatMoney(currency, buckets.savings)}`,
@@ -1255,6 +1341,8 @@ async function refreshMoneyLedger() {
 
       if (receivableAssets !== 0) parts.push(`Receivables owed to you: ${formatMoney(currency, receivableAssets)}`);
       if (receivableLiabilities !== 0) parts.push(`Receivables you owe: ${formatMoney(currency, receivableLiabilities)}`);
+
+  if (Number.isFinite(salaryTotal)) parts.push(`Salary credited: ${formatMoney(currency, salaryTotal)}`);
 
       parts.push(`Net worth: ${formatMoney(currency, netWorth)}`);
       if (savingsIndiaTotal !== 0) {
@@ -1345,6 +1433,7 @@ async function refreshMoneyLedger() {
 
 async function refresh() {
   const summary = await fetchJson('/api/summary');
+  window.__summary = summary;
   const q = rangeToQuery(selectedRange);
   const cardFilter = document.getElementById('cardFilter')?.value || '';
   // Expenses tab uses the same card filter dropdown (#cardFilter).
@@ -1382,6 +1471,28 @@ async function refresh() {
       const label = expensesCardFilter === 'none' ? 'No card' : expensesCardFilter;
       expCardTotalEl.textContent = `Total on ${label}: ${formatMoney(currency, total)}`;
     }
+  }
+
+  // Expenses tab: populate category filter options based on list results.
+  const expensesCategoryEl = document.getElementById('expensesCategoryFilter');
+  if (expensesCategoryEl) {
+    const rows = Array.isArray(expensesList?.expenses) ? expensesList.expenses : [];
+    const cats = Array.from(
+      new Set(
+        rows
+          .map((e) => String(e.category || 'misc').trim().toLowerCase())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    expensesCategoryEl.innerHTML = '<option value="">All categories</option>';
+    for (const c of cats) {
+      const opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = niceCategoryLabel(c);
+      expensesCategoryEl.appendChild(opt);
+    }
+    expensesCategoryEl.value = expensesCategoryFilter;
   }
 
   // Selected-range totals (computed client-side from the filtered expense list)
@@ -1444,7 +1555,9 @@ async function refresh() {
       ...(cardFilter ? { card: cardFilter } : {}),
     }).toString()}`
   );
-  const ytdTotal = (ytdResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
+  // Use server-provided YTD total (authoritative, not limited by client paging) for the displayed YTD value.
+  // Keep the fetched ytdResp for charts/my-share, but avoid using it for the top-line number which can be truncated.
+  const ytdTotal = Number(summary?.ytd?.total ?? (ytdResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0));
   document.getElementById('selectedYtd').textContent = formatMoney(currency, ytdTotal);
 
   const ytdMyShare = (ytdResp.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
@@ -1587,11 +1700,36 @@ async function refresh() {
 
   const expensesFilter = String(document.getElementById('expensesFilter')?.value || 'all');
   const listRows = (expensesList.expenses || []).filter((e) => {
+    const cat = String(e.category || 'misc').trim().toLowerCase();
+    if (expensesCategoryFilter && cat !== expensesCategoryFilter) return false;
     if (expensesFilter === 'split') return Boolean(e.splitType && e.splitType !== 'none');
     if (expensesFilter === 'onlyMe') return !e.splitType || e.splitType === 'none';
     if (expensesFilter === 'roommatePaid') return String(e.paidBy || '') === 'roommate';
     return true;
   });
+
+  const catTotalsEl = document.getElementById('expensesCategoryTotals');
+  const catChartEl = document.getElementById('expensesCategoryChart');
+  let catBuckets = bucketByCategory(listRows);
+  if (!catBuckets.length && listRows.length) {
+    const fallbackTotal = listRows.reduce((s, e) => s + Number(e.amount || 0), 0);
+    if (Number.isFinite(fallbackTotal) && fallbackTotal > 0) {
+      const fallbackCategory = expensesCategoryFilter || String(listRows[0]?.category || 'misc').trim().toLowerCase() || 'misc';
+      catBuckets = [{ category: fallbackCategory, total: fallbackTotal }];
+    }
+  }
+  if (catTotalsEl) {
+    if (!catBuckets.length) {
+      catTotalsEl.textContent = '';
+    } else {
+      catTotalsEl.textContent = `Categories: ${catBuckets
+        .map((b) => `${niceCategoryLabel(b.category)} ${formatMoney(currency, b.total)}`)
+        .join(' · ')}`;
+    }
+  }
+  if (catChartEl) {
+    catChartEl.innerHTML = catBuckets.length ? renderPieChart(catBuckets, currency) : '';
+  }
 
   for (const e of listRows) {
     const div = document.createElement('div');
@@ -1800,6 +1938,66 @@ async function refresh() {
 }
 
 function wireEvents() {
+  const resetAllFilters = async () => {
+    // Summary range defaults
+    selectedRange = 'month';
+    selectedMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    customFrom = '';
+    customTo = '';
+
+    const monthPicker = document.getElementById('monthPicker');
+    if (monthPicker) monthPicker.style.display = 'flex';
+    const customRange = document.getElementById('customRange');
+    if (customRange) customRange.style.display = 'none';
+
+    const monthEl = document.getElementById('month');
+    if (monthEl) monthEl.value = selectedMonth;
+    const customFromEl = document.getElementById('customFrom');
+    const customToEl = document.getElementById('customTo');
+    if (customFromEl) customFromEl.value = '';
+    if (customToEl) customToEl.value = '';
+
+    for (const b of document.querySelectorAll('[data-range]')) b.classList.remove('active');
+    const monthBtn = document.querySelector('[data-range="month"]');
+    if (monthBtn) monthBtn.classList.add('active');
+
+    // Summary card filter
+    const summaryCardEl = document.getElementById('summaryCard');
+    if (summaryCardEl) summaryCardEl.value = '';
+
+    // Expenses filters
+    expensesMonthMode = 'all';
+    expensesMonth = selectedMonth;
+    expensesCustomFrom = '';
+    expensesCustomTo = '';
+    expensesCategoryFilter = '';
+
+    const expensesMonthModeEl = document.getElementById('expensesMonthMode');
+    const expensesMonthEl = document.getElementById('expensesMonth');
+    const expensesCustomRangeEl = document.getElementById('expensesCustomRange');
+    const expensesCustomFromEl = document.getElementById('expensesCustomFrom');
+    const expensesCustomToEl = document.getElementById('expensesCustomTo');
+    if (expensesMonthModeEl) expensesMonthModeEl.value = 'all';
+    if (expensesMonthEl) expensesMonthEl.style.display = 'none';
+    if (expensesCustomRangeEl) expensesCustomRangeEl.style.display = 'none';
+    if (expensesCustomFromEl) expensesCustomFromEl.value = '';
+    if (expensesCustomToEl) expensesCustomToEl.value = '';
+
+    const expensesFilterEl = document.getElementById('expensesFilter');
+    if (expensesFilterEl) expensesFilterEl.value = 'all';
+    const expensesCategoryEl = document.getElementById('expensesCategoryFilter');
+    if (expensesCategoryEl) expensesCategoryEl.value = '';
+
+    // Card filter (affects both Summary and Expenses data pulls)
+    const cardFilterEl = document.getElementById('cardFilter');
+    if (cardFilterEl) cardFilterEl.value = '';
+
+    await refresh();
+  };
+
+  const resetFiltersBtn = document.getElementById('resetFilters');
+  if (resetFiltersBtn) resetFiltersBtn.addEventListener('click', resetAllFilters);
+
   // Init month picker
   const monthEl = document.getElementById('month');
   if (monthEl) {
@@ -1813,18 +2011,25 @@ function wireEvents() {
   // Expenses tab: independent month controls
   const expensesMonthModeEl = document.getElementById('expensesMonthMode');
   const expensesMonthEl = document.getElementById('expensesMonth');
+  const expensesCustomRangeEl = document.getElementById('expensesCustomRange');
+  const expensesCustomFromEl = document.getElementById('expensesCustomFrom');
+  const expensesCustomToEl = document.getElementById('expensesCustomTo');
   const syncExpensesMonthUi = async () => {
     if (expensesMonthModeEl) expensesMonthModeEl.value = expensesMonthMode;
     if (expensesMonthEl) {
       expensesMonthEl.value = expensesMonth;
       expensesMonthEl.style.display = expensesMonthMode === 'month' ? 'block' : 'none';
     }
+    if (expensesCustomRangeEl) expensesCustomRangeEl.style.display = expensesMonthMode === 'custom' ? 'flex' : 'none';
+    if (expensesCustomFromEl) expensesCustomFromEl.value = expensesCustomFrom;
+    if (expensesCustomToEl) expensesCustomToEl.value = expensesCustomTo;
     await refresh();
   };
   if (expensesMonthModeEl) {
     expensesMonthModeEl.value = expensesMonthMode;
     expensesMonthModeEl.addEventListener('change', async () => {
-      expensesMonthMode = expensesMonthModeEl.value === 'month' ? 'month' : 'all';
+      const mode = expensesMonthModeEl.value;
+      expensesMonthMode = mode === 'month' ? 'month' : mode === 'custom' ? 'custom' : 'all';
       await syncExpensesMonthUi();
     });
   }
@@ -1834,6 +2039,27 @@ function wireEvents() {
     expensesMonthEl.addEventListener('change', async () => {
       expensesMonth = expensesMonthEl.value;
       if (expensesMonthMode === 'month') await refresh();
+    });
+  }
+  if (expensesCustomFromEl) {
+    expensesCustomFromEl.addEventListener('change', async () => {
+      expensesCustomFrom = expensesCustomFromEl.value;
+      if (expensesMonthMode === 'custom') await refresh();
+    });
+  }
+  if (expensesCustomToEl) {
+    expensesCustomToEl.addEventListener('change', async () => {
+      expensesCustomTo = expensesCustomToEl.value;
+      if (expensesMonthMode === 'custom') await refresh();
+    });
+  }
+
+  const salaryRangeEl = document.getElementById('salaryRange');
+  if (salaryRangeEl) {
+    salaryRangeEl.value = salaryRange;
+    salaryRangeEl.addEventListener('change', async () => {
+      salaryRange = salaryRangeEl.value === 'all' ? 'all' : '12';
+      await refreshSalary();
     });
   }
 
@@ -1850,6 +2076,14 @@ function wireEvents() {
   const cardFilterEl = document.getElementById('cardFilter');
   if (cardFilterEl) {
     cardFilterEl.addEventListener('change', async () => {
+      await refresh();
+    });
+  }
+
+  const expensesCategoryEl = document.getElementById('expensesCategoryFilter');
+  if (expensesCategoryEl) {
+    expensesCategoryEl.addEventListener('change', async () => {
+      expensesCategoryFilter = String(expensesCategoryEl.value || '').trim().toLowerCase();
       await refresh();
     });
   }
@@ -2002,6 +2236,9 @@ function wireEvents() {
   const cfgResetEl = document.getElementById('cfgReset');
   const cfgStatusEl = document.getElementById('cfgStatus');
   const cardSelectEl = document.getElementById('card');
+  const editCardSelectEl = document.getElementById('editCard');
+  const cardFilterElLocal = document.getElementById('cardFilter');
+  const summaryCardElLocal = document.getElementById('summaryCard');
 
   const applyConfigToUi = () => {
     const cfg = getConfig();
@@ -2010,13 +2247,15 @@ function wireEvents() {
     renderSettingsLists(cfg);
 
     // Update card dropdown options while preserving special options
-    if (cardSelectEl) {
+    const updateCardOptions = (el, { includeNone = false } = {}) => {
+      if (!el) return;
       const keep = new Set(['', 'other']);
-      for (const opt of Array.from(cardSelectEl.querySelectorAll('option'))) {
+      if (includeNone) keep.add('none');
+      for (const opt of Array.from(el.querySelectorAll('option'))) {
         if (!keep.has(opt.value)) opt.remove();
       }
-      const insertBefore = cardSelectEl.querySelector('option[value="other"]');
-      const existing = new Set(Array.from(cardSelectEl.querySelectorAll('option')).map((o) => o.value));
+      const insertBefore = el.querySelector('option[value="other"]');
+      const existing = new Set(Array.from(el.querySelectorAll('option')).map((o) => o.value));
       const canonical = (s) => String(s || '').trim();
       const toVal = (label) => canonical(label).toLowerCase().replace(/\s+/g, '-');
 
@@ -2028,10 +2267,16 @@ function wireEvents() {
         const opt = document.createElement('option');
         opt.value = val;
         opt.textContent = cleanLabel;
-        cardSelectEl.insertBefore(opt, insertBefore);
+        if (insertBefore) el.insertBefore(opt, insertBefore);
+        else el.appendChild(opt);
         existing.add(val);
       }
-    }
+    };
+
+    updateCardOptions(cardSelectEl);
+    updateCardOptions(editCardSelectEl);
+  updateCardOptions(cardFilterElLocal, { includeNone: true });
+  updateCardOptions(summaryCardElLocal, { includeNone: true });
 
     // Update for-other dropdown options
     if (forOtherPersonEl) {
@@ -2818,10 +3063,12 @@ renderShell();
 const tabSummary = document.getElementById('tabSummary');
 const tabExpenses = document.getElementById('tabExpenses');
 const tabMoney = document.getElementById('tabMoney');
+const tabSalary = document.getElementById('tabSalary');
 const tabSettings = document.getElementById('tabSettings');
 const panelSummary = document.getElementById('panelSummary');
 const panelExpenses = document.getElementById('panelExpenses');
 const panelMoney = document.getElementById('panelMoney');
+const panelSalary = document.getElementById('panelSalary');
 const panelSettings = document.getElementById('panelSettings');
 
 const setActive = (which) => {
@@ -2829,23 +3076,30 @@ const setActive = (which) => {
   if (panelSummary) panelSummary.style.display = which === 'summary' ? 'block' : 'none';
   if (panelExpenses) panelExpenses.style.display = which === 'expenses' ? 'block' : 'none';
   if (panelMoney) panelMoney.style.display = which === 'money' ? 'block' : 'none';
+  if (panelSalary) panelSalary.style.display = which === 'salary' ? 'block' : 'none';
   if (panelSettings) panelSettings.style.display = which === 'settings' ? 'block' : 'none';
 
   for (const [btn, name] of [
     [tabSummary, 'summary'],
     [tabExpenses, 'expenses'],
     [tabMoney, 'money'],
+    [tabSalary, 'salary'],
     [tabSettings, 'settings'],
   ]) {
     if (!btn) continue;
     if (which === name) btn.classList.add('active');
     else btn.classList.remove('active');
   }
+
+  if (which === 'salary') {
+    refreshSalary();
+  }
 };
 
 if (tabSummary) tabSummary.onclick = () => setActive('summary');
 if (tabExpenses) tabExpenses.onclick = () => setActive('expenses');
 if (tabMoney) tabMoney.onclick = () => setActive('money');
+if (tabSalary) tabSalary.onclick = () => setActive('salary');
 if (tabSettings) tabSettings.onclick = () => setActive('settings');
 
 // Default tab
@@ -2865,8 +3119,10 @@ const spinRefresh = async (btn, fn) => {
 const rSummary = document.getElementById('refreshSummary');
 const rExpenses = document.getElementById('refreshExpenses');
 const rMoney = document.getElementById('refreshMoney');
+const rSalary = document.getElementById('refreshSalary');
 const rSettings = document.getElementById('refreshSettings');
 if (rSummary) rSummary.onclick = () => spinRefresh(rSummary, () => refresh());
 if (rExpenses) rExpenses.onclick = () => spinRefresh(rExpenses, () => refresh());
 if (rMoney) rMoney.onclick = () => spinRefresh(rMoney, () => refreshMoneyLedger());
+if (rSalary) rSalary.onclick = () => spinRefresh(rSalary, () => refreshSalary());
 if (rSettings) rSettings.onclick = () => spinRefresh(rSettings, () => refresh());

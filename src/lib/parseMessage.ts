@@ -56,6 +56,8 @@ const CATEGORY_WORDS = new Set([
   'lyft',
   'ola',
   'taxi',
+  'public-transit',
+  'public transit',
   'flight',
   'hotel',
   'parking',
@@ -72,15 +74,22 @@ const CATEGORY_WORDS = new Set([
   'bills',
   'utilities',
   'electric',
+  'electricity',
   'water',
   'internet',
   'phone',
+  'mobile',
   'subscription',
   'subscriptions',
   'netflix',
   'spotify',
   'youtube',
   'apple',
+  'prime',
+  'amazon-prime',
+  'amazonprime',
+  'linkedin',
+  'openai',
 
   // Lifestyle
   'shopping',
@@ -97,6 +106,8 @@ const CATEGORY_WORDS = new Set([
   'comedy',
   'show',
   'shows',
+  'trip',
+  'trips',
 
   // Health
   'health',
@@ -132,17 +143,57 @@ function normalizeCategory(cat: string): string {
   if (c === 'cab' || c === 'uber' || c === 'lyft' || c === 'ola' || c === 'taxi') return 'transport';
 
   // Transit systems / stored value
-  if (c === 'clipper' || c === 'bart' || c === 'muni' || c === 'caltrain') return 'travel';
+  if (
+    c === 'travel' ||
+    c === 'transit' ||
+    c === 'public-transit' ||
+    c === 'public transit' ||
+    c === 'clipper' ||
+    c === 'bart' ||
+    c === 'muni' ||
+    c === 'caltrain'
+  )
+    return 'public transit';
 
   // Food synonyms
   if (c === 'restaurant') return 'dining';
 
   // Entertainment synonyms
-  if (c === 'movie' || c === 'movies' || c === 'comedy' || c === 'show' || c === 'shows') return 'entertainment';
+  if (
+    c === 'movie' ||
+    c === 'movies' ||
+    c === 'comedy' ||
+    c === 'show' ||
+    c === 'shows' ||
+    c === 'trip' ||
+    c === 'trips'
+  )
+    return 'entertainment';
 
   // Utilities / recurring
-  if (c === 'electric' || c === 'water' || c === 'internet' || c === 'phone') return 'utilities';
-  if (c === 'subscription' || c === 'subscriptions' || c === 'netflix' || c === 'spotify' || c === 'youtube') return 'subscriptions';
+  if (
+    c === 'electric' ||
+    c === 'electricity' ||
+    c === 'water' ||
+    c === 'internet' ||
+    c === 'phone' ||
+    c === 'mobile'
+  )
+    return 'utilities';
+  if (
+    c === 'subscription' ||
+    c === 'subscriptions' ||
+    c === 'netflix' ||
+    c === 'spotify' ||
+    c === 'youtube' ||
+    c === 'apple' ||
+    c === 'prime' ||
+    c === 'amazon-prime' ||
+    c === 'amazonprime' ||
+    c === 'linkedin' ||
+    c === 'openai'
+  )
+    return 'subscriptions';
 
   return c;
 }
