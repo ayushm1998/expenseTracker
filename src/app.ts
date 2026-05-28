@@ -9,6 +9,7 @@ import { parseExpenseMessage } from './lib/parseMessage.js';
 import {
   insertExpense,
   listExpenses,
+  listCategoryTotals,
   sumAllTime,
   sumForRange,
   deleteExpenseById,
@@ -442,6 +443,15 @@ app.get('/api/expenses', async (req: Request, res: Response) => {
 
   const expenses = await listExpenses({ limit, from: fromYmd, to: toYmd, card });
   res.json({ ok: true, expenses, currency: CURRENCY, from: fromYmd, to: toYmd, card });
+});
+
+app.get('/api/expenses/categories', async (req: Request, res: Response) => {
+  const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
+  const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
+  const card = typeof req.query.card === 'string' ? req.query.card : undefined;
+
+  const totals = await listCategoryTotals({ from: fromYmd, to: toYmd, card, currency: CURRENCY });
+  res.json({ ok: true, totals, currency: CURRENCY, from: fromYmd, to: toYmd, card });
 });
 
 app.delete('/api/expenses/:id', async (req: Request, res: Response) => {

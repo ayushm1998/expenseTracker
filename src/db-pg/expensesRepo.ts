@@ -163,6 +163,53 @@ export async function listExpenses(args: { limit: number; from?: string; to?: st
   }));
 }
 
+export async function listCategoryTotals(args: {
+  from?: string;
+  to?: string;
+  card?: string;
+  currency?: string;
+}): Promise<Array<{ category: string; total: number }>> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const params: Array<string> = [];
+  let where = 'TRUE';
+  if (args.from) {
+    params.push(args.from);
+    where += ` AND occurred_on >= $${params.length}`;
+  }
+  if (args.to) {
+    params.push(args.to);
+    where += ` AND occurred_on <= $${params.length}`;
+  }
+
+  if (args.card) {
+    if (args.card === 'none') {
+      where += ` AND (card IS NULL OR card = '')`;
+    } else {
+      params.push(args.card);
+      where += ` AND card = $${params.length}`;
+    }
+  }
+
+  if (args.currency) {
+    params.push(args.currency);
+    where += ` AND currency = $${params.length}`;
+  }
+
+  const res = await pool.query(
+    `SELECT COALESCE(NULLIF(TRIM(category), ''), 'misc') as category,
+        COALESCE(SUM(amount), 0)::text as total
+     FROM expenses
+     WHERE ${where}
+     GROUP BY category
+     ORDER BY total DESC`,
+    params
+  );
+
+  return res.rows.map((r) => ({ category: String(r.category), total: Number(r.total) }));
+}
+
 export async function sumForRange(args: {
   from: string;
   toExclusive?: string;

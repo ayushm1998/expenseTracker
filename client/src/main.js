@@ -1555,6 +1555,13 @@ async function refresh() {
       ...(cardFilter ? { card: cardFilter } : {}),
     }).toString()}`
   );
+  const ytdCategoryResp = await fetchJson(
+    `/api/expenses/categories?${new URLSearchParams({
+      ...(ytdFrom ? { from: ytdFrom } : {}),
+      ...(ytdTo ? { to: ytdTo } : {}),
+      ...(cardFilter ? { card: cardFilter } : {}),
+    }).toString()}`
+  );
   // Use server-provided YTD total (authoritative, not limited by client paging) for the displayed YTD value.
   // Keep the fetched ytdResp for charts/my-share, but avoid using it for the top-line number which can be truncated.
   const ytdTotal = Number(summary?.ytd?.total ?? (ytdResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0));
@@ -1691,7 +1698,12 @@ async function refresh() {
   const chartEl = document.getElementById('chart');
   if (chartEl) chartEl.innerHTML = renderPieChart(buckets, currency);
 
-  const ytdBuckets = bucketByCategory(ytdResp.expenses || []);
+  const ytdBuckets = Array.isArray(ytdCategoryResp?.totals)
+    ? ytdCategoryResp.totals.map((t) => ({
+        category: String(t.category || 'misc').trim().toLowerCase() || 'misc',
+        total: Number(t.total || 0),
+      }))
+    : bucketByCategory(ytdResp.expenses || []);
   const chartYearEl = document.getElementById('chartYear');
   if (chartYearEl) chartYearEl.innerHTML = renderPieChart(ytdBuckets, currency);
 
