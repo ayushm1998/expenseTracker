@@ -150,6 +150,46 @@ export async function listLedgerEntries(args: {
   }));
 }
 
+export async function findLedgerEntryByNote(args: {
+  note: string;
+  amount: number;
+  occurredOn: string;
+}): Promise<LedgerEntry | null> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const res = await pool.query(
+    `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
+        type, amount, currency, direction, counterparty, account, asset, liability, note
+     FROM ledger_entries
+     WHERE note = $1 AND amount = $2 AND occurred_on = $3
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [args.note, args.amount, args.occurredOn]
+  );
+
+  const r = res.rows[0];
+  if (!r) return null;
+
+  return {
+    id: r.id,
+    createdAt: new Date(r.created_at).toISOString(),
+    occurredOn: toYmd(r.occurred_on),
+    source: r.source,
+    fromUser: r.from_user,
+    rawText: r.raw_text,
+    type: r.type,
+    amount: Number(r.amount),
+    currency: r.currency,
+    direction: r.direction,
+    counterparty: r.counterparty,
+    account: r.account,
+    asset: r.asset,
+    liability: r.liability,
+    note: r.note,
+  };
+}
+
 export async function getReceivableBalances(args: { currency: string }): Promise<
   Array<{ counterparty: string; net: number; iOwe: number; theyOwe: number }>
 > {

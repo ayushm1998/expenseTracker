@@ -2687,33 +2687,7 @@ function wireEvents() {
       return;
     }
 
-    // If BoFA Debit was used, also deduct from checking in Money via a matching negative ledger entry.
-    try {
-      if (String(card || '').trim() === 'bofa-debit') {
-        const exp = result?.expense;
-        const amount = Number(exp?.amount ?? exp?.myAmount ?? exp?.my_amount ?? NaN);
-        const ymd = String(exp?.occurredOn || occurredOn || '').trim();
-        await createCheckingDeductionForExpense({
-          amount,
-          currency: String(exp?.currency || result?.ack?.currency || 'USD'),
-          occurredOn: ymd,
-          note: 'expense_bofa_debit',
-        });
-      }
-      if (String(card || '').trim() === 'zolve-debit') {
-        const exp = result?.expense;
-        const amount = Number(exp?.amount ?? exp?.myAmount ?? exp?.my_amount ?? NaN);
-        const ymd = String(exp?.occurredOn || occurredOn || '').trim();
-        await createSavingsDeductionForExpense({
-          amount,
-          currency: String(exp?.currency || result?.ack?.currency || 'USD'),
-          occurredOn: ymd,
-          note: 'expense_zolve_debit',
-        });
-      }
-    } catch (e) {
-      console.warn('Failed to create BoFA Debit checking deduction', e);
-    }
+    // BoFA/Zolve debit deductions are mirrored by the server to avoid double entries.
 
     // The API ack message always references the full amount; for split expenses,
     // users usually care about "my share". If server returned myAmount, show it.

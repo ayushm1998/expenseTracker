@@ -30,6 +30,7 @@ import {
   getSalaryTotal,
   getSalaryByMonth,
   getReceivableBalances,
+  findLedgerEntryByNote,
   updateLedgerEntry,
   deleteLedgerEntry,
 } from './db-pg/ledgerRepo.js';
@@ -658,6 +659,7 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
 
   const netWorth = ledgerTotals.incomeTotal - (ledgerTotals.savingsTotal + ledgerTotals.investmentTotal + ledgerTotals.liabilityTotal);
 
+  if (res.headersSent) return;
   return res.json({
     ok: true,
     currency: CURRENCY,
@@ -721,6 +723,16 @@ app.post('/api/ledger', async (req: Request, res: Response) => {
   }
 
   const occurredOn = parsed.occurredOn ?? new Date().toISOString().slice(0, 10);
+  if (parsed.note) {
+    const existing = await findLedgerEntryByNote({
+      note: parsed.note,
+      amount: parsed.amount,
+      occurredOn,
+    });
+    if (existing) {
+      return res.json({ ok: true, entry: existing, deduped: true });
+    }
+  }
   const entry = await insertLedgerEntry({
     occurredOn,
     source: 'message',
