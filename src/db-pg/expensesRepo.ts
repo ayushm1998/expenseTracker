@@ -199,7 +199,7 @@ export async function listCategoryTotals(args: {
 
   const res = await pool.query(
     `SELECT COALESCE(NULLIF(TRIM(category), ''), 'misc') as category,
-        COALESCE(SUM(amount), 0)::text as total
+        COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as total
      FROM expenses
      WHERE ${where}
      GROUP BY category
