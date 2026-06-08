@@ -1565,14 +1565,19 @@ async function refresh() {
   );
   // Use server-provided YTD total (authoritative, not limited by client paging) for the displayed YTD value.
   // Keep the fetched ytdResp for charts/my-share, but avoid using it for the top-line number which can be truncated.
-  const ytdTotal = Number(summary?.ytd?.total ?? (ytdResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0));
-  document.getElementById('selectedYtd').textContent = formatMoney(currency, ytdTotal);
+  const ytdTotal = Number(summary?.ytd?.share ?? summary?.ytd?.total ?? (ytdResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0));
+  const ytdBilled = Number(summary?.ytd?.billed ?? 0);
+  const ytdEl = document.getElementById('selectedYtd');
+  if (ytdEl) ytdEl.textContent = formatMoney(currency, ytdTotal) + (ytdBilled ? ` (billed ${formatMoney(currency, ytdBilled)})` : '');
 
   const ytdMyShare = (ytdResp.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
   const ytdLabelEl = document.getElementById('selectedYtdLabel');
   if (ytdLabelEl) ytdLabelEl.textContent = `YTD (to ${ytdTo})`;
 
-  document.getElementById('allTotal').textContent = formatMoney(currency, summary.allTime.total);
+  const allShare = Number(summary?.allTime?.share ?? summary?.allTime?.total ?? 0);
+  const allBilled = Number(summary?.allTime?.billed ?? 0);
+  const allTotalEl = document.getElementById('allTotal');
+  if (allTotalEl) allTotalEl.textContent = formatMoney(currency, allShare) + (allBilled ? ` (billed ${formatMoney(currency, allBilled)})` : '');
 
   const netEl = document.getElementById('networth');
   if (netEl && summary?.ledger) {

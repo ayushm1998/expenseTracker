@@ -663,11 +663,11 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
   return res.json({
     ok: true,
     currency: CURRENCY,
-    allTime,
-    week,
-    month,
-    ytd,
-  salaryTotal,
+    allTime: { billed: allTime.billed_total, share: allTime.share_total, total: allTime.share_total, count: allTime.count },
+    week: { billed: week.billed_total, share: week.share_total, total: week.share_total, count: week.count },
+    month: { billed: month.billed_total, share: month.share_total, total: month.share_total, count: month.count },
+    ytd: { billed: ytd.billed_total, share: ytd.share_total, total: ytd.share_total, count: ytd.count },
+    salaryTotal,
     reimbursementBalance,
     ledger: {
       incomeTotal: ledgerTotals.incomeTotal,

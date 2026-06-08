@@ -168,7 +168,7 @@ export async function listCategoryTotals(args: {
   to?: string;
   card?: string;
   currency?: string;
-}): Promise<Array<{ category: string; total: number }>> {
+}): Promise<Array<{ category: string; billed_total: number; share_total: number }>> {
   await ensureSchema();
   const pool = getPool();
 
@@ -199,15 +199,16 @@ export async function listCategoryTotals(args: {
 
   const res = await pool.query(
     `SELECT COALESCE(NULLIF(TRIM(category), ''), 'misc') as category,
-        COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as total
+        COALESCE(SUM(amount), 0)::text as billed_total,
+        COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as share_total
      FROM expenses
      WHERE ${where}
      GROUP BY category
-     ORDER BY total DESC`,
+     ORDER BY share_total DESC`,
     params
   );
 
-  return res.rows.map((r) => ({ category: String(r.category), total: Number(r.total) }));
+  return res.rows.map((r) => ({ category: String(r.category), billed_total: Number(r.billed_total), share_total: Number(r.share_total) }));
 }
 
 export async function sumForRange(args: {
@@ -215,7 +216,7 @@ export async function sumForRange(args: {
   toExclusive?: string;
   toInclusive?: string;
   currency?: string;
-}): Promise<{ count: number; total: number }> {
+}): Promise<{ count: number; total: number; billed_total: number; share_total: number }> {
   await ensureSchema();
   const pool = getPool();
 
@@ -236,22 +237,32 @@ export async function sumForRange(args: {
   }
 
   const res = await pool.query(
-    `SELECT COUNT(*)::int as count, COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as total
+    `SELECT COUNT(*)::int as count,
+            COALESCE(SUM(amount), 0)::text as billed_total,
+            COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as share_total
      FROM expenses
      WHERE ${where}`,
     params
   );
 
-  return { count: res.rows[0].count, total: Number(res.rows[0].total) };
+  return {
+    count: res.rows[0].count,
+    total: Number(res.rows[0].share_total), // backward compatible: total is share_total
+    billed_total: Number(res.rows[0].billed_total),
+    share_total: Number(res.rows[0].share_total),
+  };
 }
 
-export async function sumAllTime(): Promise<{ count: number; total: number }> {
+export async function sumAllTime(): Promise<{ count: number; total: number; billed_total: number; share_total: number }> {
   await ensureSchema();
   const pool = getPool();
   const res = await pool.query(
-    `SELECT COUNT(*)::int as count, COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as total FROM expenses`
+    `SELECT COUNT(*)::int as count,
+            COALESCE(SUM(amount), 0)::text as billed_total,
+            COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as share_total
+     FROM expenses`
   );
-  return { count: res.rows[0].count, total: Number(res.rows[0].total) };
+  return { count: res.rows[0].count, total: Number(res.rows[0].share_total), billed_total: Number(res.rows[0].billed_total), share_total: Number(res.rows[0].share_total) };
 }
 
 export async function deleteExpenseById(args: { id: string }): Promise<{ deleted: boolean }> {
