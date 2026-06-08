@@ -361,7 +361,8 @@ function bucketByCategory(expenses) {
   const byCat = new Map();
   for (const e of expenses) {
     const cat = (e.category || '').trim().toLowerCase() || 'misc';
-    byCat.set(cat, (byCat.get(cat) || 0) + Number(e.amount || 0));
+    const amt = Number(e.myAmount ?? e.amount ?? 0);
+    byCat.set(cat, (byCat.get(cat) || 0) + amt);
   }
   return Array.from(byCat.entries())
     .map(([category, total]) => ({ category, total }))
@@ -1724,7 +1725,7 @@ async function refresh() {
   const catChartEl = document.getElementById('expensesCategoryChart');
   let catBuckets = bucketByCategory(listRows);
   if (!catBuckets.length && listRows.length) {
-    const fallbackTotal = listRows.reduce((s, e) => s + Number(e.amount || 0), 0);
+    const fallbackTotal = listRows.reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
     if (Number.isFinite(fallbackTotal) && fallbackTotal > 0) {
       const fallbackCategory = expensesCategoryFilter || String(listRows[0]?.category || 'misc').trim().toLowerCase() || 'misc';
       catBuckets = [{ category: fallbackCategory, total: fallbackTotal }];

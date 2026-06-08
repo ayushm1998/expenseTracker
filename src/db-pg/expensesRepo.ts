@@ -236,7 +236,7 @@ export async function sumForRange(args: {
   }
 
   const res = await pool.query(
-    `SELECT COUNT(*)::int as count, COALESCE(SUM(amount), 0)::text as total
+    `SELECT COUNT(*)::int as count, COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as total
      FROM expenses
      WHERE ${where}`,
     params
@@ -249,7 +249,7 @@ export async function sumAllTime(): Promise<{ count: number; total: number }> {
   await ensureSchema();
   const pool = getPool();
   const res = await pool.query(
-    `SELECT COUNT(*)::int as count, COALESCE(SUM(amount), 0)::text as total FROM expenses`
+    `SELECT COUNT(*)::int as count, COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text as total FROM expenses`
   );
   return { count: res.rows[0].count, total: Number(res.rows[0].total) };
 }
