@@ -646,7 +646,8 @@ function renderPieChart(buckets, currency) {
       const end = angle + pct * 360;
       angle = end;
       const color = colors[i % colors.length];
-      const label = `${niceCategoryLabel(b.category)} — ${formatMoney(currency, b.total)} (${Math.round(pct * 100)}%)`;
+      const billedPart = b.billed ? ` • billed ${formatMoney(currency, b.billed)}` : '';
+      const label = `${niceCategoryLabel(b.category)} — ${formatMoney(currency, b.total)} (${Math.round(pct * 100)}%)${billedPart}`;
       return `<path d="${arcPath(cx, cy, r, start, end)}" fill="${color}" opacity="0.95" title="${label}"></path>`;
     })
     .join('');
@@ -1707,7 +1708,8 @@ async function refresh() {
   const ytdBuckets = Array.isArray(ytdCategoryResp?.totals)
     ? ytdCategoryResp.totals.map((t) => ({
         category: String(t.category || 'misc').trim().toLowerCase() || 'misc',
-        total: Number(t.total || 0),
+        total: Number(t.share_total || t.total || 0),
+        billed: Number(t.billed_total || 0),
       }))
     : bucketByCategory(ytdResp.expenses || []);
   const chartYearEl = document.getElementById('chartYear');
