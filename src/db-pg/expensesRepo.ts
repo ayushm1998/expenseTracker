@@ -130,10 +130,10 @@ export async function listExpenses(args: { limit: number; offset?: number; from?
   }
 
   params.push(args.limit);
-  const limitParam = `$${params.length}`;
-  if (typeof args.offset === 'number' && args.offset > 0) {
-    params.push(args.offset);
-  }
+  // Always provide an offset param (default 0) so SQL OFFSET parameter index is stable.
+  const offsetVal = typeof args.offset === 'number' && args.offset > 0 ? args.offset : 0;
+  params.push(offsetVal);
+  const limitParam = `$${params.length - 1}`;
   const offsetParam = `$${params.length}`;
 
   const res = await pool.query(

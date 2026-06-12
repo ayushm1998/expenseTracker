@@ -1456,8 +1456,8 @@ async function refresh() {
     let offset = 0;
     const all = [];
     while (true) {
-      const params = new URLSearchParams({ limit: String(limit), ...(baseParams || {}) });
-      if (offset) params.set('offset', String(offset));
+  const params = new URLSearchParams({ limit: String(limit), ...(baseParams || {}) });
+  params.set('offset', String(offset));
       const res = await fetchJson(`/api/expenses?${params.toString()}`);
       const rows = Array.isArray(res.expenses) ? res.expenses : [];
       all.push(...rows);
