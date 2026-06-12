@@ -1746,6 +1746,19 @@ async function refresh() {
     return true;
   });
 
+  // Ensure expenses list is ordered newest -> oldest (desc by occurredOn then createdAt)
+  listRows.sort((a, b) => {
+    const aDate = String(a.occurredOn || '');
+    const bDate = String(b.occurredOn || '');
+    if (aDate > bDate) return -1;
+    if (aDate < bDate) return 1;
+    const aCreated = String(a.createdAt || '');
+    const bCreated = String(b.createdAt || '');
+    if (aCreated > bCreated) return -1;
+    if (aCreated < bCreated) return 1;
+    return 0;
+  });
+
   const catTotalsEl = document.getElementById('expensesCategoryTotals');
   const catChartEl = document.getElementById('expensesCategoryChart');
   let catBuckets = bucketByCategory(listRows);
