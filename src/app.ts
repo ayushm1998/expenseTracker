@@ -438,11 +438,11 @@ app.post('/api/ingest-message', async (req: Request, res: Response) => {
 
 app.get('/api/expenses', async (req: Request, res: Response) => {
   const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+  const offset = typeof req.query.offset === 'string' ? Number(req.query.offset) : undefined;
   const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
   const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
   const card = typeof req.query.card === 'string' ? req.query.card : undefined;
-
-  const expenses = await listExpenses({ limit, from: fromYmd, to: toYmd, card });
+  const expenses = await listExpenses({ limit, offset, from: fromYmd, to: toYmd, card });
   res.json({ ok: true, expenses, currency: CURRENCY, from: fromYmd, to: toYmd, card });
 });
 

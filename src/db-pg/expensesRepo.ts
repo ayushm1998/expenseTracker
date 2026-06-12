@@ -105,7 +105,7 @@ export async function insertExpense(args: {
   };
 }
 
-export async function listExpenses(args: { limit: number; from?: string; to?: string; card?: string }): Promise<Expense[]> {
+export async function listExpenses(args: { limit: number; offset?: number; from?: string; to?: string; card?: string }): Promise<Expense[]> {
   await ensureSchema();
   const pool = getPool();
 
@@ -131,6 +131,10 @@ export async function listExpenses(args: { limit: number; from?: string; to?: st
 
   params.push(args.limit);
   const limitParam = `$${params.length}`;
+  if (typeof args.offset === 'number' && args.offset > 0) {
+    params.push(args.offset);
+  }
+  const offsetParam = `$${params.length}`;
 
   const res = await pool.query(
     `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text, amount, currency, category, note,
@@ -138,7 +142,7 @@ export async function listExpenses(args: { limit: number; from?: string; to?: st
      FROM expenses
      WHERE ${where}
      ORDER BY occurred_on DESC, created_at DESC
-     LIMIT ${limitParam}`,
+     LIMIT ${limitParam} OFFSET ${offsetParam}`,
     params
   );
 

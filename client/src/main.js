@@ -1450,6 +1450,24 @@ async function refresh() {
     ...(cardFilter ? { card: cardFilter } : {}),
   });
   const expensesSelected = await fetchJson(`/api/expenses?${selectedRangeQuery.toString()}`);
+  // Helper to page through /api/expenses (server supports limit + offset)
+  async function fetchAllExpenses(baseParams) {
+    const limit = 200;
+    let offset = 0;
+    const all = [];
+    while (true) {
+      const params = new URLSearchParams({ limit: String(limit), ...(baseParams || {}) });
+      if (offset) params.set('offset', String(offset));
+      const res = await fetchJson(`/api/expenses?${params.toString()}`);
+      const rows = Array.isArray(res.expenses) ? res.expenses : [];
+      all.push(...rows);
+      if (rows.length < limit) break;
+      offset += limit;
+      // safety: avoid infinite loop
+      if (offset > 10000) break;
+    }
+    return { ok: true, expenses: all };
+  }
 
   const listQuery = new URLSearchParams({
     limit: '200',
@@ -1457,7 +1475,7 @@ async function refresh() {
     ...(expQ.to ? { to: expQ.to } : {}),
     ...(expensesCardFilter ? { card: expensesCardFilter } : {}),
   });
-  const expensesList = await fetchJson(`/api/expenses?${listQuery.toString()}`);
+  const expensesList = await fetchAllExpenses(Object.fromEntries(listQuery.entries()));
 
   const currency = summary.currency || 'USD';
 
