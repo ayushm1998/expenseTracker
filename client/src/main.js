@@ -1004,6 +1004,7 @@ function renderShell() {
             </div>
           </div>
           <div id="expensesCardTotal" class="muted" style="margin-top:8px;font-size:12px;"></div>
+          <div id="expensesLoading" class="muted" style="margin-top:8px;font-size:12px;"></div>
           <div id="expensesCategoryTotals" class="muted" style="margin-top:6px;font-size:12px;"></div>
           <div id="expensesCategoryChart" style="margin-top:10px;"></div>
           <div id="expenses" class="expenses"></div>
@@ -1455,9 +1456,11 @@ async function refresh() {
     const limit = 200;
     let offset = 0;
     const all = [];
+    const loadingEl = document.getElementById('expensesLoading');
     while (true) {
   const params = new URLSearchParams({ limit: String(limit), ...(baseParams || {}) });
   params.set('offset', String(offset));
+      if (loadingEl) loadingEl.textContent = `Loading expenses… fetched ${all.length} so far (offset ${offset})`;
       const res = await fetchJson(`/api/expenses?${params.toString()}`);
       const rows = Array.isArray(res.expenses) ? res.expenses : [];
       all.push(...rows);
@@ -1466,6 +1469,7 @@ async function refresh() {
       // safety: avoid infinite loop
       if (offset > 10000) break;
     }
+    if (loadingEl) loadingEl.textContent = '';
     return { ok: true, expenses: all };
   }
 
