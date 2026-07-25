@@ -23,7 +23,11 @@ cp .env.example .env
 npm run dev
 ```
 
-Open http://localhost:3000
+Open http://localhost:5173
+
+`npm run dev` starts both the API on `http://localhost:3000` and the Vite frontend
+on `http://localhost:5173`. Opening `http://localhost:3000` in dev redirects to
+the Vite frontend so stale `dist-client` builds do not mask local UI changes.
 
 ## Deploy (recommended): Vercel for frontend + separate API host
 

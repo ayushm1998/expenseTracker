@@ -32,6 +32,8 @@ server.on('timeout', (socket) => {
 });
 
 server.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Expense tracker running on http://localhost:${PORT}`);
+  console.log(`Expense tracker API running on http://localhost:${PORT}`);
+  if (process.env.DEV_FRONTEND_URL) {
+    console.log(`Frontend dev UI running on ${process.env.DEV_FRONTEND_URL}`);
+  }
 });

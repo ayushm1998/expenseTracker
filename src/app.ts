@@ -9,6 +9,7 @@ import { parseExpenseMessage } from './lib/parseMessage.js';
 import {
   insertExpense,
   listExpenses,
+  getExpenseListMeta,
   listCategoryTotals,
   sumAllTime,
   sumForRange,
@@ -26,13 +27,14 @@ import {
 import {
   insertLedgerEntry,
   listLedgerEntries,
-  getLedgerTotals,
   getSalaryTotal,
   getSalaryByMonth,
   getReceivableBalances,
   findLedgerEntryByNote,
   updateLedgerEntry,
   deleteLedgerEntry,
+  getAccountBuckets,
+  countLedgerEntries,
 } from './db-pg/ledgerRepo.js';
 
 const CURRENCY = process.env.CURRENCY ?? 'USD';
@@ -73,7 +75,6 @@ app.use((req, res, next) => {
   const { method, originalUrl } = req;
   res.on('finish', () => {
     const ms = Date.now() - start;
-    // eslint-disable-next-line no-console
     console.log(`[req] ${method} ${originalUrl} -> ${res.statusCode} (${ms}ms)`);
   });
   next();
@@ -100,7 +101,6 @@ app.use((req, res, next) => {
 // Avoid noisy errors in that case; routes that hit the DB will still fail if called.
 if (!process.env.VITEST) {
   ensureSchema().catch((err) => {
-    // eslint-disable-next-line no-console
     console.error('Failed to ensure Postgres schema:', err);
   });
 }
@@ -110,6 +110,18 @@ function wantsPlainText(req: Request): boolean {
     String(req.query.format ?? '').toLowerCase() === 'text' ||
     String(req.headers.accept ?? '').toLowerCase().includes('text/plain')
   );
+}
+
+function getUsableSplitRatio(
+  ratioMe: unknown,
+  ratioOther: unknown
+): { ratioMe: number; ratioOther: number; total: number } | null {
+  if (typeof ratioMe !== 'number' || typeof ratioOther !== 'number') return null;
+  if (!Number.isFinite(ratioMe) || !Number.isFinite(ratioOther)) return null;
+  if (ratioMe < 0 || ratioOther < 0) return null;
+  const total = ratioMe + ratioOther;
+  if (total <= 0) return null;
+  return { ratioMe, ratioOther, total };
 }
 
 // Health check that does NOT touch the DB.
@@ -194,16 +206,21 @@ function extractWhatsAppLikeMessage(body: unknown): { text?: string; from?: stri
   return { text: metaText, from: metaFrom };
 }
 
-// Serve built Vite assets when present (production).
+// Serve built Vite assets when present (production). In local dev, Vite serves
+// client/src live so stale dist-client files do not mask frontend changes.
 const distClientDir = path.resolve('dist-client');
-if (fs.existsSync(distClientDir)) {
+const shouldServeDistClient = process.env.SERVE_DIST_CLIENT !== '0' && fs.existsSync(distClientDir);
+if (shouldServeDistClient) {
   app.use(express.static(distClientDir));
 }
 
 app.get('/', (_req: Request, res: Response) => {
+  if (!shouldServeDistClient && process.env.DEV_FRONTEND_URL) {
+    return res.redirect(process.env.DEV_FRONTEND_URL);
+  }
   const prodIndex = path.resolve('dist-client/index.html');
   const devIndex = path.resolve('src/web/index.html');
-  res.sendFile(fs.existsSync(prodIndex) ? prodIndex : devIndex);
+  res.sendFile(shouldServeDistClient && fs.existsSync(prodIndex) ? prodIndex : devIndex);
 });
 
 app.post('/api/ingest-message', async (req: Request, res: Response) => {
@@ -236,15 +253,9 @@ app.post('/api/ingest-message', async (req: Request, res: Response) => {
     if (splitType !== 'none') {
       const nOthers = others.length || 1;
       myShare = parsed.amount / (1 + nOthers);
-      if (
-        splitType === 'ratio' &&
-        typeof ratioMe === 'number' &&
-        typeof ratioOther === 'number' &&
-        ratioMe > 0 &&
-        ratioOther > 0
-      ) {
-        const total = ratioMe + ratioOther;
-        myShare = (parsed.amount * ratioMe) / total;
+      const ratio = splitType === 'ratio' ? getUsableSplitRatio(ratioMe, ratioOther) : null;
+      if (ratio) {
+        myShare = (parsed.amount * ratio.ratioMe) / ratio.total;
       }
     }
 
@@ -364,9 +375,9 @@ app.post('/api/ingest-message', async (req: Request, res: Response) => {
     let myShare = expense.amount / denom;
     let eachOtherShare = nOthers > 0 ? (expense.amount - myShare) / nOthers : expense.amount - myShare;
 
-    if (splitType === 'ratio' && typeof ratioMe === 'number' && typeof ratioOther === 'number' && ratioMe > 0 && ratioOther > 0) {
-      const total = ratioMe + ratioOther;
-      myShare = (expense.amount * ratioMe) / total;
+    const ratio = splitType === 'ratio' ? getUsableSplitRatio(ratioMe, ratioOther) : null;
+    if (ratio) {
+      myShare = (expense.amount * ratio.ratioMe) / ratio.total;
       // With ratio split, treat the remainder as the "others" bucket and split it equally across others.
       const othersTotal = expense.amount - myShare;
       eachOtherShare = nOthers > 0 ? othersTotal / nOthers : othersTotal;
@@ -442,8 +453,22 @@ app.get('/api/expenses', async (req: Request, res: Response) => {
   const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
   const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
   const card = typeof req.query.card === 'string' ? req.query.card : undefined;
-  const expenses = await listExpenses({ limit, offset, from: fromYmd, to: toYmd, card });
-  res.json({ ok: true, expenses, currency: CURRENCY, from: fromYmd, to: toYmd, card });
+  const [expenses, meta] = await Promise.all([
+    listExpenses({ limit, offset, from: fromYmd, to: toYmd, card }),
+    getExpenseListMeta({ from: fromYmd, to: toYmd, card }),
+  ]);
+  res.json({
+    ok: true,
+    expenses,
+    totalCount: meta.totalCount,
+    totals: { billed: meta.billedTotal, share: meta.shareTotal },
+    limit,
+    offset: offset ?? 0,
+    currency: CURRENCY,
+    from: fromYmd,
+    to: toYmd,
+    card,
+  });
 });
 
 app.get('/api/expenses/categories', async (req: Request, res: Response) => {
@@ -488,15 +513,9 @@ app.put('/api/expenses/:id', async (req: Request, res: Response) => {
     if (splitType !== 'none') {
       const nOthers = others.length || 1;
       myShare = parsed.amount / (1 + nOthers);
-      if (
-        splitType === 'ratio' &&
-        typeof ratioMe === 'number' &&
-        typeof ratioOther === 'number' &&
-        ratioMe > 0 &&
-        ratioOther > 0
-      ) {
-        const total = ratioMe + ratioOther;
-        myShare = (parsed.amount * ratioMe) / total;
+      const ratio = splitType === 'ratio' ? getUsableSplitRatio(ratioMe, ratioOther) : null;
+      if (ratio) {
+        myShare = (parsed.amount * ratio.ratioMe) / ratio.total;
       }
     }
     parsed.myAmount = myShare;
@@ -579,15 +598,9 @@ app.put('/api/expenses/:id', async (req: Request, res: Response) => {
     let myShare = updated.amount / denom;
     let eachOtherShare = nOthers > 0 ? (updated.amount - myShare) / nOthers : updated.amount - myShare;
 
-    if (
-      splitType === 'ratio' &&
-      typeof parsed.splitRatioMe === 'number' &&
-      typeof parsed.splitRatioOther === 'number' &&
-      parsed.splitRatioMe > 0 &&
-      parsed.splitRatioOther > 0
-    ) {
-      const total = parsed.splitRatioMe + parsed.splitRatioOther;
-      myShare = (updated.amount * parsed.splitRatioMe) / total;
+    const ratio = splitType === 'ratio' ? getUsableSplitRatio(parsed.splitRatioMe, parsed.splitRatioOther) : null;
+    if (ratio) {
+      myShare = (updated.amount * ratio.ratioMe) / ratio.total;
       const othersTotal = updated.amount - myShare;
       eachOtherShare = nOthers > 0 ? othersTotal / nOthers : othersTotal;
     }
@@ -654,10 +667,10 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
   ]);
 
   const reimbursementBalance = await getReimbursementBalance({ currency: CURRENCY });
-  const ledgerTotals = await getLedgerTotals({ currency: CURRENCY });
+  const accountBuckets = await getAccountBuckets({ currency: CURRENCY });
   const receivables = await getReceivableBalances({ currency: CURRENCY });
 
-  const netWorth = ledgerTotals.incomeTotal - (ledgerTotals.savingsTotal + ledgerTotals.investmentTotal + ledgerTotals.liabilityTotal);
+  const netWorth = accountBuckets.checking + accountBuckets.savings + accountBuckets.investments - accountBuckets.liabilities;
 
   if (res.headersSent) return;
   return res.json({
@@ -670,10 +683,13 @@ app.get('/api/summary', async (_req: Request, res: Response) => {
     salaryTotal,
     reimbursementBalance,
     ledger: {
-      incomeTotal: ledgerTotals.incomeTotal,
-      savingsTotal: ledgerTotals.savingsTotal,
-      investmentTotal: ledgerTotals.investmentTotal,
-      liabilityTotal: ledgerTotals.liabilityTotal,
+      // Back-compatible field names for the existing frontend contract.
+      incomeTotal: accountBuckets.checking,
+      checkingTotal: accountBuckets.checking,
+      savingsTotal: accountBuckets.savings,
+      savingsIndiaTotal: accountBuckets.savingsIndia,
+      investmentTotal: accountBuckets.investments,
+      liabilityTotal: accountBuckets.liabilities,
       netWorth,
     },
     receivables,
@@ -698,9 +714,7 @@ app.post('/api/ledger', async (req: Request, res: Response) => {
   if (!parsed) return res.status(400).json({ ok: false, error: 'Could not parse amount from message' });
 
   if (process.env.LEDGER_DEBUG === '1') {
-    // eslint-disable-next-line no-console
     console.log('[ledger] raw:', { text });
-    // eslint-disable-next-line no-console
     console.log('[ledger] parsed:', {
       amount: parsed.amount,
       type: parsed.type,
@@ -754,15 +768,32 @@ app.post('/api/ledger', async (req: Request, res: Response) => {
 
 app.get('/api/ledger', async (req: Request, res: Response) => {
   const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+  const offset = typeof req.query.offset === 'string' ? Number(req.query.offset) : undefined;
   const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
   const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
   const type = typeof req.query.type === 'string' ? req.query.type : undefined;
 
   const allowed = new Set(['income', 'transfer', 'investment', 'liability']);
   const t = type && allowed.has(type) ? (type as any) : undefined;
+  const includeMeta = offset == null || offset === 0;
 
-  const entries = await listLedgerEntries({ limit, from: fromYmd, to: toYmd, type: t });
-  res.json({ ok: true, entries, currency: CURRENCY, from: fromYmd, to: toYmd, type: t ?? '' });
+  const [entries, accountBuckets, totalCount] = await Promise.all([
+    listLedgerEntries({ limit, offset, from: fromYmd, to: toYmd, type: t }),
+    includeMeta ? getAccountBuckets({ currency: CURRENCY }) : Promise.resolve(undefined),
+    countLedgerEntries({ from: fromYmd, to: toYmd, type: t }),
+  ]);
+  res.json({
+    ok: true,
+    entries,
+    ...(accountBuckets ? { accountBuckets } : {}),
+    totalCount,
+    limit,
+    offset: offset ?? 0,
+    currency: CURRENCY,
+    from: fromYmd,
+    to: toYmd,
+    type: t ?? '',
+  });
 });
 
 app.patch('/api/ledger/:id', async (req: Request, res: Response) => {

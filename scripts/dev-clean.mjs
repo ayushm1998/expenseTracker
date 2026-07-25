@@ -37,17 +37,13 @@ pkill('node.*tsx.*watch src/server.ts');
 pkill('node.*src/server.ts');
 pkill('vite');
 
-// Start backend + client.
+// Start backend + client through the main dev launcher.
 // Inherit env so .env works via dotenv/config and user shell exports.
-const backend = spawn('npm', ['run', 'dev'], { stdio: 'inherit' });
-const client = spawn('npm', ['run', 'dev:client'], { stdio: 'inherit' });
+const dev = spawn('npm', ['run', 'dev'], { stdio: 'inherit' });
 
 function shutdown(code = 0) {
   try {
-    backend.kill('SIGTERM');
-  } catch {}
-  try {
-    client.kill('SIGTERM');
+    dev.kill('SIGTERM');
   } catch {}
   // Ensure the ports are released even if watchers get stuck.
   setTimeout(() => {
@@ -60,12 +56,7 @@ function shutdown(code = 0) {
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
-backend.on('exit', (code) => {
-  console.log(`[dev-clean] Backend exited (${code ?? 'unknown'}). Shutting down client.`);
-  shutdown(typeof code === 'number' ? code : 0);
-});
-
-client.on('exit', (code) => {
-  console.log(`[dev-clean] Client exited (${code ?? 'unknown'}). Shutting down backend.`);
+dev.on('exit', (code) => {
+  console.log(`[dev-clean] Dev server exited (${code ?? 'unknown'}). Cleaning ports.`);
   shutdown(typeof code === 'number' ? code : 0);
 });

@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ensureSchema } from '../src/db-pg/migrate.js';
-import { insertExpense, listExpenses } from '../src/db-pg/expensesRepo.js';
+import { insertExpense, isCardRequiredForParsedExpense, listExpenses } from '../src/db-pg/expensesRepo.js';
 import { parseExpenseMessage } from '../src/lib/parseMessage.js';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -11,6 +11,14 @@ const hasDb = Boolean(process.env.DATABASE_URL);
 // To run:
 //   DATABASE_URL=... npm test
 // or set it in .env.
+
+describe('expense card requirement', () => {
+  it('requires card only when I paid', () => {
+    expect(isCardRequiredForParsedExpense({ paidBy: 'me' })).toBe(true);
+    expect(isCardRequiredForParsedExpense({ paidBy: 'roommate' })).toBe(false);
+    expect(isCardRequiredForParsedExpense({})).toBe(true);
+  });
+});
 
 describe.runIf(hasDb)('db-pg expensesRepo (integration)', () => {
   beforeAll(async () => {
@@ -25,7 +33,6 @@ describe.runIf(hasDb)('db-pg expensesRepo (integration)', () => {
       text: 'food 1 repo-test card:amex',
       from: 'test',
       source: 'test',
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       parsed: parsed!,
       defaultCurrency: 'INR',
     });

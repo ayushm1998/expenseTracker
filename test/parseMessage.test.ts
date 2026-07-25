@@ -19,7 +19,19 @@ describe('parseExpenseMessage', () => {
   });
 
   it('parses backdated ISO date', () => {
-    expect(parseExpenseMessage('rent 1200 2026-02-01')).toMatchObject({ amount: 1200, occurredOn: '2026-02-01' });
+    expect(parseExpenseMessage('rent 1200 2026-02-01')).toMatchObject({
+      amount: 1200,
+      category: 'rent',
+      occurredOn: '2026-02-01',
+    });
+  });
+
+  it('parses rent category after the amount', () => {
+    expect(parseExpenseMessage('1200 rent 2026-02-01')).toMatchObject({
+      amount: 1200,
+      category: 'rent',
+      occurredOn: '2026-02-01',
+    });
   });
 
   it('returns null when no number', () => {
@@ -41,6 +53,15 @@ describe('parseExpenseMessage', () => {
     expect(parsed?.splitType).toBe('ratio');
     expect(parsed?.splitRatioMe).toBe(2);
     expect(parsed?.splitRatioOther).toBe(1);
+  });
+
+  it('supports zero-sided ratio for 100% paid-for-me expenses', () => {
+    const parsed = parseExpenseMessage('food 100 card:amex paidby:roommate other:vyas split:1/0');
+    expect(parsed?.amount).toBe(100);
+    expect(parsed?.paidBy).toBe('roommate');
+    expect(parsed?.splitType).toBe('ratio');
+    expect(parsed?.splitRatioMe).toBe(1);
+    expect(parsed?.splitRatioOther).toBe(0);
   });
 
   it('parses ledger type token', () => {

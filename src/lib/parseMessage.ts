@@ -370,7 +370,7 @@ function extractMetaTokens(text: string): {
         splitType = 'equal';
       } else if (/^\d+(?:\.\d+)?\/\d+(?:\.\d+)?$/.test(v)) {
         const [a, b] = v.split('/').map((x) => Number(x));
-        if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
+        if (Number.isFinite(a) && Number.isFinite(b) && a >= 0 && b >= 0 && a + b > 0) {
           splitType = 'ratio';
           splitRatioMe = a;
           splitRatioOther = b;
@@ -390,7 +390,7 @@ function extractMetaTokens(text: string): {
       const next = tokens[i + 1];
       if (next && /^\d+(?:\.\d+)?\/\d+(?:\.\d+)?$/.test(next)) {
         const [a, b] = next.split('/').map((x) => Number(x));
-        if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
+        if (Number.isFinite(a) && Number.isFinite(b) && a >= 0 && b >= 0 && a + b > 0) {
           splitType = 'ratio';
           splitRatioMe = a;
           splitRatioOther = b;

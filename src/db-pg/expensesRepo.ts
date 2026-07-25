@@ -32,6 +32,61 @@ function toYmd(v: unknown): string {
   return String(v);
 }
 
+export function isCardRequiredForParsedExpense(parsed: Pick<ParsedExpense, 'paidBy'>): boolean {
+  return (parsed.paidBy ?? 'me') === 'me';
+}
+
+function buildExpenseWhereClause(args: { from?: string; to?: string; card?: string }): {
+  where: string;
+  params: Array<string>;
+} {
+  const params: Array<string> = [];
+  let where = 'TRUE';
+  if (args.from) {
+    params.push(args.from);
+    where += ` AND occurred_on >= $${params.length}`;
+  }
+  if (args.to) {
+    params.push(args.to);
+    where += ` AND occurred_on <= $${params.length}`;
+  }
+  if (args.card) {
+    if (args.card === 'none') {
+      where += ` AND (card IS NULL OR card = '')`;
+    } else {
+      params.push(args.card);
+      where += ` AND card = $${params.length}`;
+    }
+  }
+  return { where, params };
+}
+
+export async function getExpenseListMeta(args: {
+  from?: string;
+  to?: string;
+  card?: string;
+}): Promise<{ totalCount: number; billedTotal: number; shareTotal: number }> {
+  await ensureSchema();
+  const pool = getPool();
+  const { where, params } = buildExpenseWhereClause(args);
+
+  const res = await pool.query(
+    `SELECT COUNT(*)::text AS count,
+        COALESCE(SUM(amount), 0)::text AS billed_total,
+        COALESCE(SUM(CASE WHEN my_amount IS NOT NULL THEN my_amount ELSE amount END), 0)::text AS share_total
+     FROM expenses
+     WHERE ${where}`,
+    params
+  );
+
+  const row = res.rows[0] ?? {};
+  return {
+    totalCount: Number(row.count ?? 0),
+    billedTotal: Number(row.billed_total ?? 0),
+    shareTotal: Number(row.share_total ?? 0),
+  };
+}
+
 export async function insertExpense(args: {
   text: string;
   from?: string;
@@ -42,10 +97,10 @@ export async function insertExpense(args: {
   await ensureSchema();
   const pool = getPool();
 
-  // Card is required. This prevents the app from silently defaulting to a card
-  // (e.g., amex) when the user forgot to select one.
+  // Card is required only when I paid. Roommate-paid expenses should not be
+  // assigned to one of my cards.
   const card = (args.parsed.card ?? '').trim();
-  if (!card) {
+  if (!card && isCardRequiredForParsedExpense(args.parsed)) {
     throw new Error('Card is required');
   }
 
@@ -73,7 +128,7 @@ export async function insertExpense(args: {
       currency,
       args.parsed.category ?? null,
       args.parsed.note ?? null,
-      card,
+      card || null,
       args.parsed.paidBy ?? 'me',
       args.parsed.splitType ?? 'none',
       args.parsed.splitRatioMe ?? null,
@@ -109,25 +164,8 @@ export async function listExpenses(args: { limit: number; offset?: number; from?
   await ensureSchema();
   const pool = getPool();
 
-  const params: Array<string | number> = [];
-  let where = 'TRUE';
-  if (args.from) {
-    params.push(args.from);
-    where += ` AND occurred_on >= $${params.length}`;
-  }
-  if (args.to) {
-    params.push(args.to);
-    where += ` AND occurred_on <= $${params.length}`;
-  }
-
-  if (args.card) {
-    if (args.card === 'none') {
-      where += ` AND (card IS NULL OR card = '')`;
-    } else {
-      params.push(args.card);
-      where += ` AND card = $${params.length}`;
-    }
-  }
+  const { where, params: filterParams } = buildExpenseWhereClause(args);
+  const params: Array<string | number> = [...filterParams];
 
   params.push(args.limit);
   // Always provide an offset param (default 0) so SQL OFFSET parameter index is stable.

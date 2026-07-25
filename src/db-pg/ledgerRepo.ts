@@ -26,6 +26,104 @@ function toYmd(v: unknown): string {
   return String(v);
 }
 
+function safeLower(v: unknown): string {
+  return String(v ?? '').trim().toLowerCase();
+}
+
+export type AccountBuckets = {
+  checking: number;
+  savings: number;
+  investments: number;
+  liabilities: number;
+  savingsIndia: number;
+};
+
+/** Mirrors the Money-tab bucket rules in client/src/main.js. */
+export function computeAccountBucketsFromRows(
+  rows: Array<{ type?: unknown; amount?: unknown; account?: unknown; note?: unknown }>
+): AccountBuckets {
+  const buckets: AccountBuckets = {
+    checking: 0,
+    savings: 0,
+    investments: 0,
+    liabilities: 0,
+    savingsIndia: 0,
+  };
+
+  for (const e of rows) {
+    const type = safeLower(e?.type);
+    const note = safeLower(e?.note || '');
+    const amount = Number(e?.amount ?? 0);
+    if (!Number.isFinite(amount) || amount === 0) continue;
+
+    const isSavingsIndia = type === 'transfer' && note.includes('savings_india');
+    if (isSavingsIndia) {
+      buckets.savingsIndia += amount;
+      continue;
+    }
+
+    const acct = safeLower(e?.account);
+    const effAcct = acct || (type === 'income' ? 'checking' : '');
+
+    if (effAcct === 'checking' || effAcct === 'checkings' || effAcct === 'chk') buckets.checking += amount;
+    else if (effAcct === 'ccpayment' || effAcct === 'cc') buckets.savings -= amount;
+    else if (effAcct === 'savings' || effAcct === 'sav') buckets.savings += amount;
+    else if (effAcct === 'investment' || effAcct === 'investments' || effAcct === 'inv') buckets.investments += amount;
+    else if (effAcct === 'liability' || effAcct === 'liabilities' || effAcct === 'debt' || effAcct === 'loan')
+      buckets.liabilities += amount;
+    else {
+      if (type === 'transfer') buckets.savings += amount;
+      else if (type === 'investment') buckets.investments += amount;
+      else if (type === 'liability') buckets.liabilities += amount;
+      else if (type === 'income') buckets.checking += amount;
+    }
+  }
+
+  return buckets;
+}
+
+export async function getAccountBuckets(args: { currency: string }): Promise<AccountBuckets> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const res = await pool.query(
+    `SELECT type, amount, account, note
+     FROM ledger_entries
+     WHERE currency = $1`,
+    [args.currency]
+  );
+
+  return computeAccountBucketsFromRows(res.rows);
+}
+
+export async function countLedgerEntries(args: {
+  from?: string;
+  to?: string;
+  type?: LedgerEntry['type'];
+}): Promise<number> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const params: Array<string> = [];
+  let where = 'TRUE';
+
+  if (args.from) {
+    params.push(args.from);
+    where += ` AND occurred_on >= $${params.length}`;
+  }
+  if (args.to) {
+    params.push(args.to);
+    where += ` AND occurred_on <= $${params.length}`;
+  }
+  if (args.type) {
+    params.push(args.type);
+    where += ` AND type = $${params.length}`;
+  }
+
+  const res = await pool.query(`SELECT COUNT(*)::text AS count FROM ledger_entries WHERE ${where}`, params);
+  return Number(res.rows[0]?.count ?? 0);
+}
+
 export async function insertLedgerEntry(args: {
   occurredOn: string;
   source: string;
@@ -95,6 +193,7 @@ export async function insertLedgerEntry(args: {
 
 export async function listLedgerEntries(args: {
   limit: number;
+  offset?: number;
   from?: string;
   to?: string;
   type?: LedgerEntry['type'];
@@ -119,7 +218,10 @@ export async function listLedgerEntries(args: {
   }
 
   params.push(args.limit);
-  const limitParam = `$${params.length}`;
+  const offsetVal = typeof args.offset === 'number' && args.offset > 0 ? args.offset : 0;
+  params.push(offsetVal);
+  const limitParam = `$${params.length - 1}`;
+  const offsetParam = `$${params.length}`;
 
   const res = await pool.query(
     `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
@@ -127,7 +229,7 @@ export async function listLedgerEntries(args: {
      FROM ledger_entries
      WHERE ${where}
      ORDER BY occurred_on DESC, created_at DESC
-     LIMIT ${limitParam}`,
+     LIMIT ${limitParam} OFFSET ${offsetParam}`,
     params
   );
 

@@ -48,34 +48,6 @@ async function fetchJsonOrThrow(url, options) {
   return res;
 }
 
-async function createCheckingDeductionForExpense({ amount, currency, occurredOn, note }) {
-  // Create a matching negative checking entry so debit-card spending reduces checking balance.
-  const n = Number(amount);
-  if (!Number.isFinite(n) || n <= 0) return;
-  const ymd = String(occurredOn || '').trim();
-  const suffix = ymd ? ` ${ymd}` : '';
-  const entryText = `${0 - n} type:income account:checking note:${String(note || 'expense_debit').trim()}${suffix}`;
-  await fetchJsonOrThrow('/api/ledger', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text: entryText, source: 'web' }),
-  });
-}
-
-async function createSavingsDeductionForExpense({ amount, currency, occurredOn, note }) {
-  // Create a matching negative savings entry so debit-card spending reduces savings balance.
-  const n = Number(amount);
-  if (!Number.isFinite(n) || n <= 0) return;
-  const ymd = String(occurredOn || '').trim();
-  const suffix = ymd ? ` ${ymd}` : '';
-  const entryText = `${0 - n} type:transfer account:savings note:${String(note || 'expense_debit').trim()}${suffix}`;
-  await fetchJsonOrThrow('/api/ledger', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text: entryText, source: 'web' }),
-  });
-}
-
 function buildEditTextFromForm(baseText, opts) {
   const cleaned = String(baseText || '').trim();
   const tokens = [];
@@ -185,8 +157,8 @@ function openExpenseEditor(expense, { onSave } = {}) {
     if (splitTypeEl.value !== 'ratio') splitRatioEl.value = '';
   };
 
-  // Card is mandatory: highlight if missing.
-  if (!String(cardEl.value || '').trim()) {
+  // Card is mandatory only when I paid.
+  if (paidByEl.value === 'me' && !String(cardEl.value || '').trim()) {
     statusEl.textContent = 'Select a card.';
     statusEl.className = 'status error';
   }
@@ -244,7 +216,7 @@ function openExpenseEditor(expense, { onSave } = {}) {
   if (saveBtn) {
     saveBtn.onclick = async () => {
       try {
-        if (!String(cardEl.value || '').trim()) {
+        if (paidByEl.value === 'me' && !String(cardEl.value || '').trim()) {
           statusEl.textContent = 'Select a card.';
           statusEl.className = 'status error';
           return;
@@ -554,17 +526,31 @@ async function updateExpense(id, payload) {
   });
 }
 
-// Track which tab is currently active so we can do targeted refreshes.
-let activeTab = 'summary';
+const LEDGER_PAGE_SIZE = 50;
+const EXPENSES_PAGE_SIZE = 50;
 
-async function refreshExpenses() {
-  // Refresh only expense-related data (Expenses tab + Summary tab).
-  await refresh();
+let ledgerListState = { entries: [], totalCount: 0, currency: 'USD' };
+let expensesListState = { rows: [], totalCount: 0, currency: 'USD', queryKey: '', totals: { billed: 0, share: 0 } };
+let ledgerListLoadingMore = false;
+let expensesListLoadingMore = false;
+
+function expensesQueryKey(params) {
+  return JSON.stringify({
+    from: params?.from || '',
+    to: params?.to || '',
+    card: params?.card || '',
+  });
 }
 
-async function refreshMoney() {
-  // Refresh only money-related data (Money tab + shared receivables/net-worth).
-  await refreshMoneyLedger();
+function renderLoadMoreFooter({ buttonId, shown, total, loading }) {
+  if (shown >= total) return '';
+  return `
+    <div style="margin-top:10px;text-align:center;">
+      <button type="button" id="${buttonId}" class="btn-secondary"${loading ? ' disabled' : ''}>
+        ${loading ? 'Loading…' : `Load more (${shown} of ${total})`}
+      </button>
+    </div>
+  `;
 }
 
 let salaryRange = '12';
@@ -608,17 +594,6 @@ async function refreshSalary() {
   }
 }
 
-async function refreshCurrentTab() {
-  if (activeTab === 'money') {
-    await refreshMoney();
-  } else if (activeTab === 'salary') {
-    await refreshSalary();
-  } else {
-    // Summary and Expenses share the same data; refresh both.
-    await refreshExpenses();
-  }
-}
-
 async function refreshAll() {
   // Refresh all data without a full page reload.
   await refresh();
@@ -653,7 +628,6 @@ function renderPieChart(buckets, currency) {
     .join('');
 
   const legend = buckets
-    .slice(0, 8)
     .map((b, i) => {
       const color = colors[i % colors.length];
       return `
@@ -891,7 +865,7 @@ function renderShell() {
           <input id="text" name="text" type="text" autocomplete="off" placeholder="e.g. food 250 chai" required />
           <div class="row">
             <input id="occurredOn" name="occurredOn" type="date" />
-            <select id="card" name="card" aria-label="Card" required>
+            <select id="card" name="card" aria-label="Card">
               <option value="">Select card…</option>
               <option value="amex">Amex</option>
               <option value="citi">Citi</option>
@@ -1242,6 +1216,128 @@ function renderLedgerEntryRow(currency, e) {
   `;
 }
 
+function wireLedgerEntryButtons(listEl) {
+  for (const btn of listEl.querySelectorAll('[data-ledger-del]')) {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-ledger-del');
+      if (!id) return;
+      if (!confirm('Delete this ledger entry?')) return;
+      const r = await fetchJsonOrThrow(`/api/ledger/${id}`, { method: 'DELETE' });
+      if (r?.ok === false) throw new Error(r?.error || 'Delete failed');
+      await refreshMoneyLedger();
+    });
+  }
+
+  for (const btn of listEl.querySelectorAll('[data-ledger-edit]')) {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-ledger-edit');
+      if (!id) return;
+
+      const current = ledgerListState.entries.find((x) => String(x?.id) === String(id));
+      const curText = String(current?.note || current?.rawText || '').trim();
+      const curAmount = String(current?.amount ?? '').trim();
+      const curDate = String(current?.occurredOn || '').slice(0, 10);
+      const curType = String(current?.type || '').trim();
+      const curAcct = String(current?.account || '').trim();
+
+      const text = prompt('Update note/text (shown in list):', curText);
+      if (text === null) return;
+      const amountStr = prompt('Update amount:', curAmount);
+      if (amountStr === null) return;
+      const amount = Number(amountStr);
+      if (!Number.isFinite(amount)) {
+        alert('Invalid amount');
+        return;
+      }
+      const occurredOn = prompt('Update date (YYYY-MM-DD):', curDate);
+      if (occurredOn === null) return;
+      const type = prompt('Update type (income/transfer/investment/liability):', curType);
+      if (type === null) return;
+      const account = prompt('Update account (checking/savings/investments/liabilities) or blank:', curAcct);
+      if (account === null) return;
+
+      const r = await fetchJsonOrThrow(`/api/ledger/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          note: text,
+          rawText: text,
+          amount,
+          occurredOn,
+          type,
+          account: account.trim() ? account.trim() : null,
+        }),
+      });
+      if (r?.ok === false) throw new Error(r?.error || 'Update failed');
+      await refreshMoneyLedger();
+    });
+  }
+}
+
+function renderLedgerListDom(listEl) {
+  const { entries, totalCount, currency } = ledgerListState;
+
+  if (!entries.length) {
+    listEl.innerHTML = '<div class="muted" style="font-size:12px;">No ledger entries yet.</div>';
+    return;
+  }
+
+  const truncated = totalCount > entries.length;
+  const truncationNote = truncated
+    ? `<div class="muted" style="font-size:12px;margin-bottom:8px;">Showing ${entries.length} of ${totalCount} entries (most recent first). Totals above include all entries.</div>`
+    : '';
+
+  listEl.innerHTML =
+    truncationNote +
+    entries.map((e) => renderLedgerEntryRow(currency, e)).join('') +
+    renderLoadMoreFooter({
+      buttonId: 'ledgerLoadMore',
+      shown: entries.length,
+      total: totalCount,
+      loading: ledgerListLoadingMore,
+    });
+
+  wireLedgerEntryButtons(listEl);
+  const btn = document.getElementById('ledgerLoadMore');
+  if (btn) btn.onclick = () => loadMoreLedgerEntries();
+}
+
+async function fetchLedgerPage({ offset = 0, append = false } = {}) {
+  const params = new URLSearchParams({
+    limit: String(LEDGER_PAGE_SIZE),
+    offset: String(offset),
+  });
+  const res = await fetchJson(`/api/ledger?${params.toString()}`);
+  if (res?.ok === false) throw new Error(res?.error || 'Failed to load ledger');
+
+  const newEntries = Array.isArray(res?.entries) ? res.entries : [];
+  if (append) ledgerListState.entries.push(...newEntries);
+  else ledgerListState.entries = newEntries;
+
+  ledgerListState.totalCount = Number(res?.totalCount ?? ledgerListState.entries.length);
+  ledgerListState.currency = res?.currency || 'USD';
+  return res;
+}
+
+async function loadMoreLedgerEntries() {
+  if (ledgerListLoadingMore) return;
+  if (ledgerListState.entries.length >= ledgerListState.totalCount) return;
+
+  ledgerListLoadingMore = true;
+  const listEl = document.getElementById('ledgerList');
+  if (listEl) renderLedgerListDom(listEl);
+
+  try {
+    await fetchLedgerPage({ offset: ledgerListState.entries.length, append: true });
+    if (listEl) renderLedgerListDom(listEl);
+  } catch (err) {
+    alert(err?.message || String(err));
+  } finally {
+    ledgerListLoadingMore = false;
+    if (listEl) renderLedgerListDom(listEl);
+  }
+}
+
 async function refreshMoneyLedger() {
   const listEl = document.getElementById('ledgerList');
   const acctEl = document.getElementById('accountTotals');
@@ -1255,68 +1351,31 @@ async function refreshMoneyLedger() {
 
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetchJson('/api/ledger?limit=100', { signal: ctrl.signal });
+    const res = await fetchLedgerPage({ offset: 0, append: false });
     clearTimeout(t);
     if (res?.ok === false) throw new Error(res?.error || 'Failed to load ledger');
 
-    const currency = res?.currency || 'USD';
-    const entries = Array.isArray(res?.entries) ? res.entries : [];
+    const currency = ledgerListState.currency;
+    const serverBuckets = res?.accountBuckets;
 
-  // Track total transferred to savings India (note:savings_india)
-  let savingsIndiaTotal = 0;
-
-    // Account totals
-    // Rules (simple + local-first):
-    // - Income => increases an account; default account is checking.
-    // - Transfer => treated as savings bucket (since backend uses transfer as savingsTotal).
-    // - Investment => investments bucket.
-    // - Liability => liabilities bucket.
-    // - If user explicitly sets account:savings/checking/investment/liability we respect it.
-    const buckets = {
-      checking: 0,
-      savings: 0,
-      investments: 0,
-      liabilities: 0,
-    };
-    let receivableAssets = 0;
-    let receivableLiabilities = 0;
-
-    for (const e of entries) {
-      const type = safeLower(e?.type);
-      const note = safeLower(e?.note || '');
-      const amount = Number(e?.amount ?? 0);
-      if (!Number.isFinite(amount) || amount === 0) continue;
-
-      const isSavingsIndia = type === 'transfer' && note.includes('savings_india');
-      if (isSavingsIndia) {
-        savingsIndiaTotal += amount;
-        // Do not include these in the standard savings bucket totals.
-        continue;
-      }
-
-      const acct = safeLower(e?.account);
-      const effAcct = acct || (type === 'income' ? 'checking' : '');
-
-      if (effAcct === 'checking' || effAcct === 'checkings' || effAcct === 'chk') buckets.checking += amount;
-      else if (effAcct === 'ccpayment' || effAcct === 'cc') buckets.savings -= amount;
-
-      else if (effAcct === 'savings' || effAcct === 'sav') buckets.savings += amount;
-      else if (effAcct === 'investment' || effAcct === 'investments' || effAcct === 'inv') buckets.investments += amount;
-      else if (effAcct === 'liability' || effAcct === 'liabilities' || effAcct === 'debt' || effAcct === 'loan') buckets.liabilities += amount;
-      else {
-        // No explicit account: fall back to type buckets.
-        if (type === 'transfer') buckets.savings += amount;
-        else if (type === 'investment') buckets.investments += amount;
-        else if (type === 'liability') buckets.liabilities += amount;
-        else if (type === 'income') buckets.checking += amount;
-      }
-    }
+    // Account totals come from the server (all rows). The list below is paginated.
+    const buckets = serverBuckets
+      ? {
+          checking: Number(serverBuckets.checking ?? 0),
+          savings: Number(serverBuckets.savings ?? 0),
+          investments: Number(serverBuckets.investments ?? 0),
+          liabilities: Number(serverBuckets.liabilities ?? 0),
+        }
+      : { checking: 0, savings: 0, investments: 0, liabilities: 0 };
+    const savingsIndiaTotal = Number(serverBuckets?.savingsIndia ?? 0);
 
     // Borrow/Lend tracker balances (shown under Money tab) should also affect net worth buckets.
     // Semantics:
     // - Positive balance means someone owes you => asset (we treat as checking-equivalent).
     // - Negative balance means you owe someone => liability.
     // This fixes cases like "receipt I took" not showing under liabilities.
+    let receivableAssets = 0;
+    let receivableLiabilities = 0;
     if (window.__receivables && typeof window.__receivables === 'object') {
       for (const key of Object.keys(window.__receivables)) {
         const bal = Number(window.__receivables[key]);
@@ -1354,70 +1413,7 @@ async function refreshMoneyLedger() {
       acctEl.textContent = parts.join(' · ');
     }
 
-    if (listEl) {
-      if (!entries.length) {
-        listEl.innerHTML = '<div class="muted" style="font-size:12px;">No ledger entries yet.</div>';
-      } else {
-        listEl.innerHTML = entries.map((e) => renderLedgerEntryRow(currency, e)).join('');
-
-        // Wire buttons
-        for (const btn of listEl.querySelectorAll('[data-ledger-del]')) {
-          btn.addEventListener('click', async () => {
-            const id = btn.getAttribute('data-ledger-del');
-            if (!id) return;
-            if (!confirm('Delete this ledger entry?')) return;
-            const r = await fetchJsonOrThrow(`/api/ledger/${id}`, { method: 'DELETE' });
-            if (r?.ok === false) throw new Error(r?.error || 'Delete failed');
-            await refreshMoneyLedger();
-          });
-        }
-
-        for (const btn of listEl.querySelectorAll('[data-ledger-edit]')) {
-          btn.addEventListener('click', async () => {
-            const id = btn.getAttribute('data-ledger-edit');
-            if (!id) return;
-
-            const current = entries.find((x) => String(x?.id) === String(id));
-            const curText = String(current?.note || current?.rawText || '').trim();
-            const curAmount = String(current?.amount ?? '').trim();
-            const curDate = String(current?.occurredOn || '').slice(0, 10);
-            const curType = String(current?.type || '').trim();
-            const curAcct = String(current?.account || '').trim();
-
-            const text = prompt('Update note/text (shown in list):', curText);
-            if (text === null) return;
-            const amountStr = prompt('Update amount:', curAmount);
-            if (amountStr === null) return;
-            const amount = Number(amountStr);
-            if (!Number.isFinite(amount)) {
-              alert('Invalid amount');
-              return;
-            }
-            const occurredOn = prompt('Update date (YYYY-MM-DD):', curDate);
-            if (occurredOn === null) return;
-            const type = prompt('Update type (income/transfer/investment/liability):', curType);
-            if (type === null) return;
-            const account = prompt('Update account (checking/savings/investments/liabilities) or blank:', curAcct);
-            if (account === null) return;
-
-            const r = await fetchJsonOrThrow(`/api/ledger/${id}`, {
-              method: 'PATCH',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                note: text,
-                rawText: text,
-                amount,
-                occurredOn,
-                type,
-                account: account.trim() ? account.trim() : null,
-              }),
-            });
-            if (r?.ok === false) throw new Error(r?.error || 'Update failed');
-            await refreshMoneyLedger();
-          });
-        }
-      }
-    }
+    if (listEl) renderLedgerListDom(listEl);
   } catch (err) {
     const msg = err?.name === 'AbortError' ? 'Timed out loading ledger (is the API running on :3000?)' : err?.message || String(err);
     if (listEl) {
@@ -1434,6 +1430,186 @@ async function refreshMoneyLedger() {
   }
 }
 
+function filterExpenseListRows(rows) {
+  const expensesFilter = String(document.getElementById('expensesFilter')?.value || 'all');
+  return rows.filter((e) => {
+    const cat = String(e.category || 'misc').trim().toLowerCase();
+    if (expensesCategoryFilter && cat !== expensesCategoryFilter) return false;
+    if (expensesFilter === 'split') return Boolean(e.splitType && e.splitType !== 'none');
+    if (expensesFilter === 'onlyMe') return !e.splitType || e.splitType === 'none';
+    if (expensesFilter === 'roommatePaid') return String(e.paidBy || '') === 'roommate';
+    return true;
+  });
+}
+
+function sortExpenseRows(rows) {
+  return [...rows].sort((a, b) => {
+    const aDate = String(a.occurredOn || '');
+    const bDate = String(b.occurredOn || '');
+    if (aDate > bDate) return -1;
+    if (aDate < bDate) return 1;
+    const aCreated = String(a.createdAt || '');
+    const bCreated = String(b.createdAt || '');
+    if (aCreated > bCreated) return -1;
+    if (aCreated < bCreated) return 1;
+    return 0;
+  });
+}
+
+function createExpenseRowElement(e, currency) {
+  const div = document.createElement('div');
+  div.className = 'expense';
+  div.dataset.expenseId = e.id;
+
+  const left = document.createElement('div');
+  left.className = 'left';
+
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = e.category ? `${e.category}` : e.note || 'expense';
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = `${e.occurredOn} • ${e.rawText}`;
+
+  left.appendChild(title);
+  left.appendChild(meta);
+
+  const amt = document.createElement('div');
+  amt.className = 'amount';
+  const fullAmount = Number(e.amount ?? 0);
+  const myAmount = Number(e.myAmount ?? e.amount ?? 0);
+  const isSplit = Boolean(e.splitType && String(e.splitType) !== 'none');
+  if (isSplit) {
+    const cur = e.currency || currency;
+    amt.innerHTML = `${formatMoney(cur, myAmount)}<div class="muted" style="font-size:12px;line-height:1.2;margin-top:2px;">total ${formatMoney(cur, fullAmount)}</div>`;
+  } else {
+    amt.textContent = formatMoney(e.currency || currency, fullAmount);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'chip';
+  editBtn.textContent = 'Edit';
+  editBtn.addEventListener('click', async () => {
+    openExpenseEditor(e, {
+      onSave: async ({ text, occurredOn }) => {
+        await updateExpense(e.id, {
+          text,
+          occurredOn: String(occurredOn || '').trim() || undefined,
+        });
+        await refreshAll();
+      },
+    });
+  });
+
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'chip danger';
+  delBtn.textContent = 'Delete';
+  delBtn.addEventListener('click', async () => {
+    if (!confirm('Delete this expense?')) return;
+    try {
+      await deleteExpense(e.id);
+      await refreshAll();
+    } catch (err) {
+      alert(err?.message || String(err));
+    }
+  });
+
+  actions.appendChild(editBtn);
+  actions.appendChild(delBtn);
+
+  div.appendChild(left);
+  div.appendChild(amt);
+  div.appendChild(actions);
+  return div;
+}
+
+function renderExpensesListDom() {
+  const root = document.getElementById('expenses');
+  if (!root) return;
+
+  const currency = expensesListState.currency || 'USD';
+  const listRows = sortExpenseRows(filterExpenseListRows(expensesListState.rows));
+  const { totalCount } = expensesListState;
+
+  root.innerHTML = '';
+
+  if (!listRows.length) {
+    root.innerHTML = '<div class="muted" style="font-size:12px;">No expenses in this range.</div>';
+    return;
+  }
+
+  for (const e of listRows) {
+    root.appendChild(createExpenseRowElement(e, currency));
+  }
+
+  const footer = document.createElement('div');
+  footer.innerHTML = renderLoadMoreFooter({
+    buttonId: 'expensesLoadMore',
+    shown: expensesListState.rows.length,
+    total: totalCount,
+    loading: expensesListLoadingMore,
+  });
+  if (footer.firstElementChild) root.appendChild(footer.firstElementChild);
+
+  const btn = document.getElementById('expensesLoadMore');
+  if (btn) btn.onclick = () => loadMoreExpenses();
+}
+
+async function fetchExpensesPage({ baseParams, offset = 0, append = false }) {
+  const params = new URLSearchParams({
+    limit: String(EXPENSES_PAGE_SIZE),
+    offset: String(offset),
+    ...(baseParams || {}),
+  });
+  const res = await fetchJson(`/api/expenses?${params.toString()}`);
+  if (res?.ok === false) throw new Error(res?.error || 'Failed to load expenses');
+
+  const newRows = Array.isArray(res?.expenses) ? res.expenses : [];
+  if (append) expensesListState.rows.push(...newRows);
+  else expensesListState.rows = newRows;
+
+  expensesListState.totalCount = Number(res?.totalCount ?? expensesListState.rows.length);
+  expensesListState.currency = res?.currency || 'USD';
+  expensesListState.totals = {
+    billed: Number(res?.totals?.billed ?? 0),
+    share: Number(res?.totals?.share ?? 0),
+  };
+  expensesListState.queryKey = expensesQueryKey(baseParams);
+  return res;
+}
+
+async function loadMoreExpenses() {
+  if (expensesListLoadingMore) return;
+  if (expensesListState.rows.length >= expensesListState.totalCount) return;
+
+  const expQ = expensesMonthToQuery();
+  const cardFilter = document.getElementById('cardFilter')?.value || '';
+  const baseParams = {
+    ...(expQ.from ? { from: expQ.from } : {}),
+    ...(expQ.to ? { to: expQ.to } : {}),
+    ...(cardFilter ? { card: cardFilter } : {}),
+  };
+
+  expensesListLoadingMore = true;
+  renderExpensesListDom();
+
+  try {
+    await fetchExpensesPage({ baseParams, offset: expensesListState.rows.length, append: true });
+    renderExpensesListDom();
+  } catch (err) {
+    alert(err?.message || String(err));
+  } finally {
+    expensesListLoadingMore = false;
+    renderExpensesListDom();
+  }
+}
+
 async function refresh() {
   const summary = await fetchJson('/api/summary');
   window.__summary = summary;
@@ -1445,69 +1621,67 @@ async function refresh() {
   // For charts/summary, we want the selected-range filter (week/month/year/custom/all).
   // For the Expenses tab list, we want its independent month filter.
   const selectedRangeQuery = new URLSearchParams({
-    limit: '200',
+    limit: '1',
     ...(q.from ? { from: q.from } : {}),
     ...(q.to ? { to: q.to } : {}),
     ...(cardFilter ? { card: cardFilter } : {}),
   });
-  const expensesSelected = await fetchJson(`/api/expenses?${selectedRangeQuery.toString()}`);
-  // Helper to page through /api/expenses (server supports limit + offset)
-  async function fetchAllExpenses(baseParams) {
-    const limit = 200;
-    let offset = 0;
-    const all = [];
-    const loadingEl = document.getElementById('expensesLoading');
-    while (true) {
-  const params = new URLSearchParams({ limit: String(limit), ...(baseParams || {}) });
-  params.set('offset', String(offset));
-      if (loadingEl) loadingEl.textContent = `Loading expenses… fetched ${all.length} so far (offset ${offset})`;
-      const res = await fetchJson(`/api/expenses?${params.toString()}`);
-      const rows = Array.isArray(res.expenses) ? res.expenses : [];
-      all.push(...rows);
-      if (rows.length < limit) break;
-      offset += limit;
-      // safety: avoid infinite loop
-      if (offset > 10000) break;
-    }
-    if (loadingEl) loadingEl.textContent = '';
-    return { ok: true, expenses: all };
-  }
+  const selectedMetaResp = await fetchJson(`/api/expenses?${selectedRangeQuery.toString()}`);
+  const selectedRangeCategories = await fetchJson(
+    `/api/expenses/categories?${new URLSearchParams({
+      ...(q.from ? { from: q.from } : {}),
+      ...(q.to ? { to: q.to } : {}),
+      ...(cardFilter ? { card: cardFilter } : {}),
+    }).toString()}`
+  );
+  const selectedPageResp = await fetchJson(
+    `/api/expenses?${new URLSearchParams({
+      limit: '200',
+      ...(q.from ? { from: q.from } : {}),
+      ...(q.to ? { to: q.to } : {}),
+      ...(cardFilter ? { card: cardFilter } : {}),
+    }).toString()}`
+  );
+  const expensesSelected = selectedPageResp;
 
-  const listQuery = new URLSearchParams({
-    limit: '200',
+  const listBaseParams = {
     ...(expQ.from ? { from: expQ.from } : {}),
     ...(expQ.to ? { to: expQ.to } : {}),
     ...(expensesCardFilter ? { card: expensesCardFilter } : {}),
-  });
-  const expensesList = await fetchAllExpenses(Object.fromEntries(listQuery.entries()));
+  };
+  await fetchExpensesPage({ baseParams: listBaseParams, offset: 0, append: false });
+  const expensesList = { expenses: expensesListState.rows, totals: expensesListState.totals };
+
+  const expCategoriesResp = await fetchJson(
+    `/api/expenses/categories?${new URLSearchParams({
+      ...(expQ.from ? { from: expQ.from } : {}),
+      ...(expQ.to ? { to: expQ.to } : {}),
+      ...(expensesCardFilter ? { card: expensesCardFilter } : {}),
+    }).toString()}`
+  );
 
   const currency = summary.currency || 'USD';
 
   // Expenses tab: show card totals under the header, using the same filters as the Expenses list.
   const expCardTotalEl = document.getElementById('expensesCardTotal');
   if (expCardTotalEl) {
-    // Total for the filtered set currently driving the Expenses list.
-    const rows = Array.isArray(expensesList?.expenses) ? expensesList.expenses : [];
-    const total = rows.reduce((s, e) => s + Number(e.amount || 0), 0);
+    const billedTotal = Number(expensesList?.totals?.billed ?? 0);
     if (!expensesCardFilter) {
       expCardTotalEl.textContent = '';
     } else {
       const label = expensesCardFilter === 'none' ? 'No card' : expensesCardFilter;
-      expCardTotalEl.textContent = `Total on ${label}: ${formatMoney(currency, total)}`;
+      expCardTotalEl.textContent = `Total on ${label}: ${formatMoney(currency, billedTotal)}`;
     }
   }
 
-  // Expenses tab: populate category filter options based on list results.
+  // Expenses tab: populate category filter options from server totals (all rows in range).
   const expensesCategoryEl = document.getElementById('expensesCategoryFilter');
   if (expensesCategoryEl) {
-    const rows = Array.isArray(expensesList?.expenses) ? expensesList.expenses : [];
-    const cats = Array.from(
-      new Set(
-        rows
-          .map((e) => String(e.category || 'misc').trim().toLowerCase())
+    const cats = Array.isArray(expCategoriesResp?.totals)
+      ? expCategoriesResp.totals
+          .map((t) => String(t.category || 'misc').trim().toLowerCase())
           .filter(Boolean)
-      )
-    ).sort((a, b) => a.localeCompare(b));
+      : [];
 
     expensesCategoryEl.innerHTML = '<option value="">All categories</option>';
     for (const c of cats) {
@@ -1519,27 +1693,17 @@ async function refresh() {
     expensesCategoryEl.value = expensesCategoryFilter;
   }
 
-  // Selected-range totals (computed client-side from the filtered expense list)
-  // Selected total: by default we want this to reflect *my share* (myAmount) rather than the full billed amount.
-  // The full billed amount is still useful, so we keep it as a muted secondary hint below.
-  const selectedBilledTotal = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
-  // "My billed" rules:
-  // 1) If I paid, count the full billed amount.
-  // 2) If someone else paid, count only my share.
-  const selectedTotal = (expensesSelected.expenses || []).reduce((s, e) => {
-    const full = Number(e.amount || 0);
-    const myShare = Number(e.myAmount ?? e.amount ?? 0);
-    const paidBy = String(e.paidBy || '').toLowerCase();
-    const iPaid = !paidBy || paidBy === 'me';
-    return s + (iPaid ? full : myShare);
-  }, 0);
+  // Selected-range totals: use server aggregates (all matching rows, not just the first page).
+  const selectedBilledTotal = Number(selectedMetaResp?.totals?.billed ?? 0);
+  const selectedMyShareFromServer = Number(selectedMetaResp?.totals?.share ?? 0);
+  const selectedTotal = selectedMyShareFromServer;
   const selectedTotalEl = document.getElementById('selectedTotal');
   if (selectedTotalEl) {
     selectedTotalEl.innerHTML = `${formatMoney(currency, selectedTotal)}<div class="muted" style="font-size:12px;line-height:1.2;margin-top:2px;">billed ${formatMoney(currency, selectedBilledTotal)}</div>`;
   }
 
-  // Selected-range "my share" (after splits). This reflects what you actually consumed.
-  const selectedMyShare = (expensesSelected.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
+  // Selected-range "my share" (after splits). Uses all rows via server aggregate.
+  const selectedMyShare = selectedMyShareFromServer;
 
   // Labels
   const labelEl = document.getElementById('selectedLabel');
@@ -1593,7 +1757,6 @@ async function refresh() {
   const ytdEl = document.getElementById('selectedYtd');
   if (ytdEl) ytdEl.textContent = formatMoney(currency, ytdTotal) + (ytdBilled ? ` (billed ${formatMoney(currency, ytdBilled)})` : '');
 
-  const ytdMyShare = (ytdResp.expenses || []).reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
   const ytdLabelEl = document.getElementById('selectedYtdLabel');
   if (ytdLabelEl) ytdLabelEl.textContent = `YTD (to ${ytdTo})`;
 
@@ -1609,13 +1772,22 @@ async function refresh() {
     const recvLiab = rows.reduce((s, r) => s + Number(r?.iOwe || 0), 0);
     const recvAsset = rows.reduce((s, r) => s + Number(r?.theyOwe || 0), 0);
     const combinedNetWorth = Number(l.netWorth || 0) + recvAsset - recvLiab;
+    const baseParts = [
+      `Checking: ${formatMoney(currency, Number(l.checkingTotal ?? l.incomeTotal ?? 0))}`,
+      `Savings: ${formatMoney(currency, Number(l.savingsTotal ?? 0))}`,
+    ];
+    if (Number(l.savingsIndiaTotal || 0) !== 0) {
+      baseParts.push(`Savings India: ${formatMoney(currency, Number(l.savingsIndiaTotal || 0))}`);
+    }
+    baseParts.push(
+      `Investments: ${formatMoney(currency, Number(l.investmentTotal || 0))}`,
+      `Liabilities: ${formatMoney(currency, Number(l.liabilityTotal || 0))}`,
+      `Net: ${formatMoney(currency, Number(l.netWorth || 0))}`
+    );
 
     // Keep the original ledger-only net worth, but also show how receivables affect it.
     netEl.innerHTML =
-      `Income: ${formatMoney(currency, l.incomeTotal)} · Savings: ${formatMoney(currency, l.savingsTotal)} · Investments: ${formatMoney(
-        currency,
-        l.investmentTotal
-      )} · Liabilities: ${formatMoney(currency, l.liabilityTotal)} · Net: ${formatMoney(currency, l.netWorth)}` +
+      baseParts.join(' · ') +
       `<div class="muted" style="margin-top:4px;font-size:12px;line-height:1.25;">
         Receivables: +${formatMoney(currency, recvAsset)} · Owed by you: -${formatMoney(currency, recvLiab)} · Net after receivables: ${formatMoney(
         currency,
@@ -1659,23 +1831,23 @@ async function refresh() {
     if (!summaryCard) {
       cardTotalsEl.textContent = '';
     } else {
-      const selCardResp = await fetchJson(
+      const selCardMeta = await fetchJson(
         `/api/expenses?${new URLSearchParams({
-          limit: '200',
+          limit: '1',
           ...(q.from ? { from: q.from } : {}),
           ...(q.to ? { to: q.to } : {}),
           card: summaryCard,
         }).toString()}`
       );
-      const selCardTotal = (selCardResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
+      const selCardTotal = Number(selCardMeta?.totals?.billed ?? 0);
 
-      const ytdCardResp = await fetchJson(
-        `/api/expenses?${new URLSearchParams({ limit: '200', from: ytdFrom, to: ytdTo, card: summaryCard }).toString()}`
+      const ytdCardMeta = await fetchJson(
+        `/api/expenses?${new URLSearchParams({ limit: '1', from: ytdFrom, to: ytdTo, card: summaryCard }).toString()}`
       );
-      const ytdCardTotal = (ytdCardResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
+      const ytdCardTotal = Number(ytdCardMeta?.totals?.billed ?? 0);
 
-      const allCardResp = await fetchJson(`/api/expenses?${new URLSearchParams({ limit: '200', card: summaryCard }).toString()}`);
-      const allCardTotal = (allCardResp.expenses || []).reduce((s, e) => s + Number(e.amount || 0), 0);
+      const allCardMeta = await fetchJson(`/api/expenses?${new URLSearchParams({ limit: '1', card: summaryCard }).toString()}`);
+      const allCardTotal = Number(allCardMeta?.totals?.billed ?? 0);
 
       cardTotalsEl.textContent = `Card totals (${summaryCard}): ${formatMoney(currency, selCardTotal)} selected • ${formatMoney(currency, ytdCardTotal)} YTD • ${formatMoney(currency, allCardTotal)} all time`;
     }
@@ -1723,7 +1895,13 @@ async function refresh() {
     shareChartEl.appendChild(note);
   }
 
-  const buckets = bucketByCategory(expensesSelected.expenses || []);
+  const buckets = Array.isArray(selectedRangeCategories?.totals)
+    ? selectedRangeCategories.totals.map((t) => ({
+        category: String(t.category || 'misc').trim().toLowerCase() || 'misc',
+        total: Number(t.share_total || t.total || 0),
+        billed: Number(t.billed_total || 0),
+      }))
+    : bucketByCategory(expensesSelected.expenses || []);
   const chartEl = document.getElementById('chart');
   if (chartEl) chartEl.innerHTML = renderPieChart(buckets, currency);
 
@@ -1737,35 +1915,20 @@ async function refresh() {
   const chartYearEl = document.getElementById('chartYear');
   if (chartYearEl) chartYearEl.innerHTML = renderPieChart(ytdBuckets, currency);
 
-  const root = document.getElementById('expenses');
-  root.innerHTML = '';
+  const loadingEl = document.getElementById('expensesLoading');
+  if (loadingEl) loadingEl.textContent = '';
 
-  const expensesFilter = String(document.getElementById('expensesFilter')?.value || 'all');
-  const listRows = (expensesList.expenses || []).filter((e) => {
-    const cat = String(e.category || 'misc').trim().toLowerCase();
-    if (expensesCategoryFilter && cat !== expensesCategoryFilter) return false;
-    if (expensesFilter === 'split') return Boolean(e.splitType && e.splitType !== 'none');
-    if (expensesFilter === 'onlyMe') return !e.splitType || e.splitType === 'none';
-    if (expensesFilter === 'roommatePaid') return String(e.paidBy || '') === 'roommate';
-    return true;
-  });
-
-  // Ensure expenses list is ordered newest -> oldest (desc by occurredOn then createdAt)
-  listRows.sort((a, b) => {
-    const aDate = String(a.occurredOn || '');
-    const bDate = String(b.occurredOn || '');
-    if (aDate > bDate) return -1;
-    if (aDate < bDate) return 1;
-    const aCreated = String(a.createdAt || '');
-    const bCreated = String(b.createdAt || '');
-    if (aCreated > bCreated) return -1;
-    if (aCreated < bCreated) return 1;
-    return 0;
-  });
+  const listRows = sortExpenseRows(filterExpenseListRows(expensesListState.rows));
 
   const catTotalsEl = document.getElementById('expensesCategoryTotals');
   const catChartEl = document.getElementById('expensesCategoryChart');
-  let catBuckets = bucketByCategory(listRows);
+  let catBuckets = Array.isArray(expCategoriesResp?.totals)
+    ? expCategoriesResp.totals.map((t) => ({
+        category: String(t.category || 'misc').trim().toLowerCase() || 'misc',
+        total: Number(t.share_total || t.total || 0),
+        billed: Number(t.billed_total || 0),
+      }))
+    : bucketByCategory(listRows);
   if (!catBuckets.length && listRows.length) {
     const fallbackTotal = listRows.reduce((s, e) => s + Number(e.myAmount ?? e.amount ?? 0), 0);
     if (Number.isFinite(fallbackTotal) && fallbackTotal > 0) {
@@ -1786,80 +1949,7 @@ async function refresh() {
     catChartEl.innerHTML = catBuckets.length ? renderPieChart(catBuckets, currency) : '';
   }
 
-  for (const e of listRows) {
-    const div = document.createElement('div');
-    div.className = 'expense';
-    div.dataset.expenseId = e.id;
-
-    const left = document.createElement('div');
-    left.className = 'left';
-
-    const title = document.createElement('div');
-    title.className = 'title';
-    title.textContent = e.category ? `${e.category}` : e.note || 'expense';
-
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.textContent = `${e.occurredOn} • ${e.rawText}`;
-
-    left.appendChild(title);
-    left.appendChild(meta);
-
-    const amt = document.createElement('div');
-    amt.className = 'amount';
-    // Expenses list (option 2): show *my share* as the primary number when split.
-    // The full amount is still stored as e.amount and is shown as muted context.
-    const fullAmount = Number(e.amount ?? 0);
-    const myAmount = Number(e.myAmount ?? e.amount ?? 0);
-    const isSplit = Boolean(e.splitType && String(e.splitType) !== 'none');
-    if (isSplit) {
-      const cur = e.currency || currency;
-      amt.innerHTML = `${formatMoney(cur, myAmount)}<div class="muted" style="font-size:12px;line-height:1.2;margin-top:2px;">total ${formatMoney(cur, fullAmount)}</div>`;
-    } else {
-      amt.textContent = formatMoney(e.currency || currency, fullAmount);
-    }
-
-    const actions = document.createElement('div');
-    actions.className = 'actions';
-
-    const editBtn = document.createElement('button');
-    editBtn.type = 'button';
-    editBtn.className = 'chip';
-    editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', async () => {
-      openExpenseEditor(e, {
-        onSave: async ({ text, occurredOn }) => {
-          await updateExpense(e.id, {
-            text,
-            occurredOn: String(occurredOn || '').trim() || undefined,
-          });
-          await refreshAll();
-        },
-      });
-    });
-
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'chip danger';
-    delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', async () => {
-      if (!confirm('Delete this expense?')) return;
-      try {
-        await deleteExpense(e.id);
-        await refreshAll();
-      } catch (err) {
-        alert(err?.message || String(err));
-      }
-    });
-
-    actions.appendChild(editBtn);
-    actions.appendChild(delBtn);
-
-    div.appendChild(left);
-    div.appendChild(amt);
-    div.appendChild(actions);
-    root.appendChild(div);
-  }
+  renderExpensesListDom();
 
   // Populate parties dropdown (multi-person support)
   const partyEl = document.getElementById('partyFilter');
@@ -2159,14 +2249,13 @@ function wireEvents() {
   const forOtherPersonEl = document.getElementById('forOtherPerson');
   const forOtherNameEl = document.getElementById('forOtherName');
   const splitToggleEl = document.getElementById('splitToggle');
-  const forOtherGroupEl = document.getElementById('forOtherGroup');
   if (splitEl && splitRatioEl && splitWithEl && splitWithNameEl && splitWithMoreEl) {
     const normalizeSplitRatio = (raw) => {
       const s = String(raw || '').trim();
       if (!s) return '';
       // Accept: 1/1, 1:1, 1-1, 1,1, 2:1 etc.
       const cleaned = s.replace(/\s+/g, '');
-      const m = cleaned.match(/^(\d+(?:\.\d+)?)[\/:,-](\d+(?:\.\d+)?)$/);
+      const m = cleaned.match(/^(\d+(?:\.\d+)?)[/:,-](\d+(?:\.\d+)?)$/);
       if (!m) return '';
       const a = Number(m[1]);
       const b = Number(m[2]);
@@ -2339,6 +2428,7 @@ function wireEvents() {
     }
 
     // Expenses tab: dynamic roommate & people options (no hardcoding)
+    const cardEl = document.getElementById('card');
     const paidByEl = document.getElementById('paidBy');
     const paidByRoommateEl = document.getElementById('paidByRoommateName');
     if (paidByRoommateEl) setRoommateSelectOptions(paidByRoommateEl, cfg.roommates || []);
@@ -2354,6 +2444,7 @@ function wireEvents() {
       const on = String(paidByEl.value) === 'roommate';
       paidByRoommateEl.style.display = on ? 'block' : 'none';
       if (!on) paidByRoommateEl.value = '';
+      if (cardEl) cardEl.required = !on;
     };
 
     const updatePaidForMeUi = () => {
@@ -2631,7 +2722,7 @@ function wireEvents() {
       const s = String(raw || '').trim();
       if (!s) return '';
       const cleaned = s.replace(/\s+/g, '');
-      const m = cleaned.match(/^(\d+(?:\.\d+)?)[\/:,-](\d+(?:\.\d+)?)$/);
+      const m = cleaned.match(/^(\d+(?:\.\d+)?)[/:,-](\d+(?:\.\d+)?)$/);
       if (!m) return '';
       const a = Number(m[1]);
       const b = Number(m[2]);
@@ -2649,12 +2740,12 @@ function wireEvents() {
     // Examples appended:
     //   card:amex paidby:me split 50/50 2026-02-01
     const metaParts = [];
-    if (!card) {
+    if (paidBy === 'me' && !paidForMe && !card) {
       status.textContent = 'Select a card before adding an expense.';
       status.className = 'status error';
       return;
     }
-    metaParts.push(`card:${card}`);
+    if (card) metaParts.push(`card:${card}`);
     // Keep the existing parser contract: paidby supports only me|roommate.
     // For friends/other people, we map to paidby:roommate and encode the name in other:<name>.
     if (paidForMe) {
@@ -3029,7 +3120,7 @@ function wireEvents() {
 
       try {
         // Normalize amount to a strict positive number (strip commas/currency symbols).
-  const amtClean = amount.replace(/[^0-9.\-]+/g, '');
+  const amtClean = amount.replace(/[^0-9.-]+/g, '');
         const amtNum = Math.abs(Number(amtClean));
         if (!Number.isFinite(amtNum) || amtNum <= 0) throw new Error('Enter a valid positive amount.');
 
@@ -3101,7 +3192,6 @@ const panelSalary = document.getElementById('panelSalary');
 const panelSettings = document.getElementById('panelSettings');
 
 const setActive = (which) => {
-  activeTab = which;
   if (panelSummary) panelSummary.style.display = which === 'summary' ? 'block' : 'none';
   if (panelExpenses) panelExpenses.style.display = which === 'expenses' ? 'block' : 'none';
   if (panelMoney) panelMoney.style.display = which === 'money' ? 'block' : 'none';
