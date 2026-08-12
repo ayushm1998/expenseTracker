@@ -117,6 +117,46 @@ export async function getReimbursementBalance(args?: {
   return { theyOweMe, iOweThem, net: theyOweMe - iOweThem };
 }
 
+export async function listReimbursementBalancesByParty(args?: {
+  currency?: string;
+}): Promise<Array<{ otherParty: string; theyOweMe: number; iOweThem: number; net: number }>> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const params: string[] = [];
+  let where = 'TRUE';
+  if (args?.currency) {
+    params.push(args.currency);
+    where += ` AND currency = $1`;
+  }
+
+  const res = await pool.query(
+    `SELECT
+        other_party,
+        COALESCE(SUM(CASE WHEN direction = 'they_owe_me' THEN amount ELSE 0 END), 0)::text AS they_owe_me,
+        COALESCE(SUM(CASE WHEN direction = 'i_owe_them' THEN amount ELSE 0 END), 0)::text AS i_owe_them
+     FROM reimbursements
+     WHERE ${where}
+     GROUP BY other_party
+     ORDER BY ABS(
+        COALESCE(SUM(CASE WHEN direction = 'they_owe_me' THEN amount ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN direction = 'i_owe_them' THEN amount ELSE 0 END), 0)
+      ) DESC, other_party ASC`,
+    params
+  );
+
+  return res.rows.map((r) => {
+    const theyOweMe = Number(r.they_owe_me);
+    const iOweThem = Number(r.i_owe_them);
+    return {
+      otherParty: String(r.other_party),
+      theyOweMe,
+      iOweThem,
+      net: theyOweMe - iOweThem,
+    };
+  });
+}
+
 export async function listReimbursements(args?: {
   limit?: number;
   from?: string;

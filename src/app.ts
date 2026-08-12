@@ -21,6 +21,7 @@ import { ensureSchema } from './db-pg/migrate.js';
 import {
   insertReimbursement,
   getReimbursementBalance,
+  listReimbursementBalancesByParty,
   listReimbursements,
   listOtherParties,
 } from './db-pg/reimbursementsRepo.js';
@@ -845,8 +846,9 @@ app.get('/api/reimbursements', async (req: Request, res: Response) => {
 
   const rows = await listReimbursements({ limit, from: fromYmd, to: toYmd, otherParty, currency: CURRENCY });
   const balance = await getReimbursementBalance({ otherParty, currency: CURRENCY });
+  const partyBalances = otherParty ? [] : await listReimbursementBalancesByParty({ currency: CURRENCY });
 
-  res.json({ ok: true, currency: CURRENCY, reimbursements: rows, balance, from: fromYmd, to: toYmd, otherParty });
+  res.json({ ok: true, currency: CURRENCY, reimbursements: rows, balance, partyBalances, from: fromYmd, to: toYmd, otherParty });
 });
 
 app.get('/api/reimbursements/parties', async (_req: Request, res: Response) => {

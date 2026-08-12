@@ -752,6 +752,19 @@ function renderShell() {
           <div style="height:14px;"></div>
 
           <div>
+            <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+              <div style="font-weight:800;">Reimbursements</div>
+              <select id="partyFilter" name="partyFilter" aria-label="Filter by person">
+                <option value="">All people</option>
+              </select>
+            </div>
+            <div class="muted" id="reimbBalance" style="margin-top:10px;font-size:12px;"></div>
+            <div id="reimbList" class="expenses" style="margin-top:10px;"></div>
+          </div>
+
+          <div style="height:14px;"></div>
+
+          <div>
             <div style="font-weight:800;">Accounts</div>
             <div class="muted" style="margin-top:6px;font-size:12px;" id="accountTotals">—</div>
           </div>
@@ -765,21 +778,6 @@ function renderShell() {
             </div>
             <div id="ledgerList" class="expenses" style="margin-top:10px;"></div>
           </div>
-        </div>
-      </section>
-
-      <section class="grid">
-        <div class="card">
-          <div class="card-head">
-            <h2>Reimbursements</h2>
-            <div class="card-head-right">
-              <select id="partyFilter" name="partyFilter" aria-label="Filter by person">
-                <option value="">All people</option>
-              </select>
-            </div>
-          </div>
-          <div class="muted" id="reimbBalance" style="margin-top:10px;font-size:12px;"></div>
-          <div id="reimbList" class="expenses" style="margin-top:10px;"></div>
         </div>
       </section>
       </div>
@@ -2001,17 +1999,14 @@ async function refresh() {
 
     const rows = reimbResp.reimbursements || [];
 
-    // If no person is selected, show one net row per person (much easier to read).
+    // If no person is selected, show one server-computed net row per person.
     if (!party) {
-      const byParty = new Map();
-      for (const r of rows) {
-        const whoKey = (r.otherParty || 'someone').trim().toLowerCase();
-        const delta = r.direction === 'they_owe_me' ? Number(r.amount || 0) : -Number(r.amount || 0);
-        byParty.set(whoKey, (byParty.get(whoKey) || 0) + delta);
-      }
-
-      const items = Array.from(byParty.entries())
-        .map(([whoKey, net]) => ({ whoKey, who: nicePersonLabel(whoKey), net }))
+      const serverBalances = Array.isArray(reimbResp.partyBalances) ? reimbResp.partyBalances : [];
+      const items = serverBalances
+        .map((r) => ({
+          who: nicePersonLabel(r.otherParty),
+          net: Number(r.net || 0),
+        }))
         .filter((x) => Math.abs(x.net) > 0.00001)
         .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
 
