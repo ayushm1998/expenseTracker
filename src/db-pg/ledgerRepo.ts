@@ -19,6 +19,7 @@ export type LedgerEntry = {
   asset: string | null;
   liability: string | null;
   note: string | null;
+  reimbursementId: string | null;
 };
 
 function toYmd(v: unknown): string {
@@ -96,10 +97,21 @@ export async function getAccountBuckets(args: { currency: string }): Promise<Acc
   return computeAccountBucketsFromRows(res.rows);
 }
 
+function addCreditCardPaymentFilter(where: string): string {
+  return `${where} AND (
+    COALESCE(note, '') ILIKE '%deduct_for_cc_payment%' OR
+    COALESCE(raw_text, '') ILIKE '%deduct_for_cc_payment%' OR
+    COALESCE(note, '') ILIKE '%subtract_for_cc_payment%' OR
+    COALESCE(raw_text, '') ILIKE '%subtract_for_cc_payment%'
+  )`;
+}
+
 export async function countLedgerEntries(args: {
   from?: string;
   to?: string;
   type?: LedgerEntry['type'];
+  counterparty?: string;
+  ccPaymentsOnly?: boolean;
 }): Promise<number> {
   await ensureSchema();
   const pool = getPool();
@@ -119,9 +131,49 @@ export async function countLedgerEntries(args: {
     params.push(args.type);
     where += ` AND type = $${params.length}`;
   }
+  if (args.counterparty) {
+    params.push(args.counterparty);
+    where += ` AND lower(COALESCE(counterparty, '')) = lower($${params.length})`;
+  }
+  if (args.ccPaymentsOnly) where = addCreditCardPaymentFilter(where);
 
   const res = await pool.query(`SELECT COUNT(*)::text AS count FROM ledger_entries WHERE ${where}`, params);
   return Number(res.rows[0]?.count ?? 0);
+}
+
+export async function sumLedgerEntries(args: {
+  from?: string;
+  to?: string;
+  type?: LedgerEntry['type'];
+  counterparty?: string;
+  ccPaymentsOnly?: boolean;
+}): Promise<number> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const params: Array<string> = [];
+  let where = 'TRUE';
+
+  if (args.from) {
+    params.push(args.from);
+    where += ` AND occurred_on >= $${params.length}`;
+  }
+  if (args.to) {
+    params.push(args.to);
+    where += ` AND occurred_on <= $${params.length}`;
+  }
+  if (args.type) {
+    params.push(args.type);
+    where += ` AND type = $${params.length}`;
+  }
+  if (args.counterparty) {
+    params.push(args.counterparty);
+    where += ` AND lower(COALESCE(counterparty, '')) = lower($${params.length})`;
+  }
+  if (args.ccPaymentsOnly) where = addCreditCardPaymentFilter(where);
+
+  const res = await pool.query(`SELECT COALESCE(SUM(amount), 0)::text AS total FROM ledger_entries WHERE ${where}`, params);
+  return Number(res.rows[0]?.total ?? 0);
 }
 
 export async function insertLedgerEntry(args: {
@@ -138,6 +190,7 @@ export async function insertLedgerEntry(args: {
   asset?: string;
   liability?: string;
   note?: string;
+  reimbursementId?: string;
 }): Promise<LedgerEntry> {
   await ensureSchema();
   const pool = getPool();
@@ -148,10 +201,10 @@ export async function insertLedgerEntry(args: {
   const row = await pool.query(
     `INSERT INTO ledger_entries (
       id, created_at, occurred_on, source, from_user, raw_text,
-      type, amount, currency, direction, counterparty, account, asset, liability, note
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      type, amount, currency, direction, counterparty, account, asset, liability, note, reimbursement_id
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
     RETURNING id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
-      type, amount, currency, direction, counterparty, account, asset, liability, note`,
+      type, amount, currency, direction, counterparty, account, asset, liability, note, reimbursement_id`,
     [
       id,
       createdAt,
@@ -168,6 +221,7 @@ export async function insertLedgerEntry(args: {
       args.asset ?? null,
       args.liability ?? null,
       args.note ?? null,
+      args.reimbursementId ?? null,
     ]
   );
 
@@ -188,6 +242,7 @@ export async function insertLedgerEntry(args: {
     asset: r.asset,
     liability: r.liability,
     note: r.note,
+    reimbursementId: r.reimbursement_id,
   };
 }
 
@@ -197,6 +252,8 @@ export async function listLedgerEntries(args: {
   from?: string;
   to?: string;
   type?: LedgerEntry['type'];
+  counterparty?: string;
+  ccPaymentsOnly?: boolean;
 }): Promise<LedgerEntry[]> {
   await ensureSchema();
   const pool = getPool();
@@ -216,6 +273,11 @@ export async function listLedgerEntries(args: {
     params.push(args.type);
     where += ` AND type = $${params.length}`;
   }
+  if (args.counterparty) {
+    params.push(args.counterparty);
+    where += ` AND lower(COALESCE(counterparty, '')) = lower($${params.length})`;
+  }
+  if (args.ccPaymentsOnly) where = addCreditCardPaymentFilter(where);
 
   params.push(args.limit);
   const offsetVal = typeof args.offset === 'number' && args.offset > 0 ? args.offset : 0;
@@ -225,7 +287,7 @@ export async function listLedgerEntries(args: {
 
   const res = await pool.query(
     `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
-      type, amount, currency, direction, counterparty, account, asset, liability, note
+      type, amount, currency, direction, counterparty, account, asset, liability, note, reimbursement_id
      FROM ledger_entries
      WHERE ${where}
      ORDER BY occurred_on DESC, created_at DESC
@@ -249,7 +311,43 @@ export async function listLedgerEntries(args: {
     asset: r.asset,
     liability: r.liability,
     note: r.note,
+    reimbursementId: r.reimbursement_id,
   }));
+}
+
+export async function findLedgerEntryById(args: { id: string }): Promise<LedgerEntry | null> {
+  await ensureSchema();
+  const pool = getPool();
+
+  const res = await pool.query(
+    `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
+        type, amount, currency, direction, counterparty, account, asset, liability, note, reimbursement_id
+     FROM ledger_entries
+     WHERE id = $1`,
+    [args.id]
+  );
+
+  const r = res.rows[0];
+  if (!r) return null;
+
+  return {
+    id: r.id,
+    createdAt: new Date(r.created_at).toISOString(),
+    occurredOn: toYmd(r.occurred_on),
+    source: r.source,
+    fromUser: r.from_user,
+    rawText: r.raw_text,
+    type: r.type,
+    amount: Number(r.amount),
+    currency: r.currency,
+    direction: r.direction,
+    counterparty: r.counterparty,
+    account: r.account,
+    asset: r.asset,
+    liability: r.liability,
+    note: r.note,
+    reimbursementId: r.reimbursement_id,
+  };
 }
 
 export async function findLedgerEntryByNote(args: {
@@ -262,7 +360,7 @@ export async function findLedgerEntryByNote(args: {
 
   const res = await pool.query(
     `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
-        type, amount, currency, direction, counterparty, account, asset, liability, note
+        type, amount, currency, direction, counterparty, account, asset, liability, note, reimbursement_id
      FROM ledger_entries
      WHERE note = $1 AND amount = $2 AND occurred_on = $3
      ORDER BY created_at DESC
@@ -289,6 +387,7 @@ export async function findLedgerEntryByNote(args: {
     asset: r.asset,
     liability: r.liability,
     note: r.note,
+    reimbursementId: r.reimbursement_id,
   };
 }
 
@@ -430,7 +529,7 @@ export async function updateLedgerEntry(args: {
 
   const existing = await pool.query(
     `SELECT id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
-        type, amount, currency, direction, counterparty, account, asset, liability, note
+        type, amount, currency, direction, counterparty, account, asset, liability, note, reimbursement_id
      FROM ledger_entries
      WHERE id = $1`,
     [args.id]
@@ -456,7 +555,7 @@ export async function updateLedgerEntry(args: {
          direction=$7, counterparty=$8, account=$9, asset=$10, liability=$11, note=$12
      WHERE id=$1
      RETURNING id, created_at, occurred_on::text as occurred_on, source, from_user, raw_text,
-        type, amount, currency, direction, counterparty, account, asset, liability, note`,
+        type, amount, currency, direction, counterparty, account, asset, liability, note, reimbursement_id`,
     [
       args.id,
       occurredOn,
@@ -490,6 +589,7 @@ export async function updateLedgerEntry(args: {
     asset: r.asset,
     liability: r.liability,
     note: r.note,
+    reimbursementId: r.reimbursement_id,
   };
 }
 

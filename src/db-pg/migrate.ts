@@ -79,7 +79,8 @@ export async function ensureSchema(): Promise<void> {
       account TEXT,
       asset TEXT,
       liability TEXT,
-      note TEXT
+      note TEXT,
+      reimbursement_id TEXT
     )`
   );
 
@@ -90,4 +91,6 @@ export async function ensureSchema(): Promise<void> {
   await pool.query(`ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS note TEXT`);
   await pool.query(`ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS direction TEXT`);
   await pool.query(`ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS counterparty TEXT`);
+  await pool.query(`ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS reimbursement_id TEXT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_ledger_entries_reimbursement_id ON ledger_entries(reimbursement_id)`);
 }

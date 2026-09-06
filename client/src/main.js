@@ -254,6 +254,55 @@ function formatMoney(currency, amount) {
   }
 }
 
+function roundsToZeroCents(amount) {
+  return Math.abs(Number(amount || 0)) < 0.005;
+}
+
+function personKey(v) {
+  return String(v || '').trim().toLowerCase();
+}
+
+function buildPeopleBalances(summary, reimbursementPartyBalances) {
+  const people = new Map();
+
+  const get = (name) => {
+    const key = personKey(name);
+    if (!key) return null;
+    if (!people.has(key)) {
+      people.set(key, {
+        key,
+        rawName: String(name || '').trim(),
+        displayName: nicePersonLabel(name),
+        receivableNet: 0,
+        reimbursementNet: 0,
+      });
+    }
+    return people.get(key);
+  };
+
+  for (const r of summary?.receivables || []) {
+    const p = get(r?.counterparty);
+    if (!p) continue;
+    const theyOwe = Number(r?.theyOwe || 0);
+    const iOwe = Number(r?.iOwe || 0);
+    p.receivableNet += (Number.isFinite(theyOwe) ? theyOwe : 0) - (Number.isFinite(iOwe) ? iOwe : 0);
+  }
+
+  for (const r of reimbursementPartyBalances || []) {
+    const p = get(r?.otherParty);
+    if (!p) continue;
+    const net = Number(r?.net || 0);
+    if (Number.isFinite(net)) p.reimbursementNet += net;
+  }
+
+  return Array.from(people.values())
+    .map((p) => ({
+      ...p,
+      net: p.receivableNet + p.reimbursementNet,
+    }))
+    .sort((a, b) => Math.abs(b.net) - Math.abs(a.net) || a.displayName.localeCompare(b.displayName));
+}
+
 function toYmd(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -529,10 +578,11 @@ async function updateExpense(id, payload) {
 const LEDGER_PAGE_SIZE = 50;
 const EXPENSES_PAGE_SIZE = 50;
 
-let ledgerListState = { entries: [], totalCount: 0, currency: 'USD' };
+let ledgerListState = { entries: [], totalCount: 0, totalAmount: 0, currency: 'USD' };
 let expensesListState = { rows: [], totalCount: 0, currency: 'USD', queryKey: '', totals: { billed: 0, share: 0 } };
 let ledgerListLoadingMore = false;
 let expensesListLoadingMore = false;
+let ledgerEntryFilter = '';
 
 function expensesQueryKey(params) {
   return JSON.stringify({
@@ -723,41 +773,39 @@ function renderShell() {
 
           <div style="height:12px;"></div>
 
-          <form id="recvForm" class="form">
-            <label for="recvAmount">Borrow/Lend tracker (keeps remaining balance)</label>
-            <div class="row">
-              <select id="recvAction" aria-label="Action">
-                <option value="took">I took from</option>
-                <option value="gave">I gave to</option>
-                <option value="return">I returned to</option>
-                <option value="got">I got back from</option>
-              </select>
-              <input id="recvPerson" type="text" placeholder="Person (e.g. kevin)" class="grow" />
-              <input id="recvAmount" type="number" placeholder="Amount" inputmode="decimal" />
-              <button type="submit">Add</button>
-            </div>
-            <div class="row" id="recvDeductRow" style="display:none; margin-top:6px;">
-              <label class="muted" style="font-size:12px;">Deduct cash from</label>
-              <select id="recvDeductFrom" aria-label="Deduct from">
-                <option value="">Don't deduct</option>
-                <option value="checking">Checking</option>
-                <option value="savings">Savings</option>
-              </select>
-            </div>
-            <p id="recvStatus" class="status"></p>
-          </form>
-
-          <div class="muted" style="margin-top:8px;font-size:12px;" id="receivables"></div>
-
-          <div style="height:14px;"></div>
-
           <div>
             <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-              <div style="font-weight:800;">Reimbursements</div>
+              <div style="font-weight:800;">People Balances</div>
               <select id="partyFilter" name="partyFilter" aria-label="Filter by person">
                 <option value="">All people</option>
               </select>
             </div>
+            <form id="reimbPaymentForm" class="form" style="margin-top:10px;">
+              <div class="row">
+                <select id="reimbPaymentAction" aria-label="People balance action">
+                  <option value="borrow_gave">I lent to them</option>
+                  <option value="borrow_took">I borrowed from them</option>
+                  <option value="borrow_return">I paid them back</option>
+                  <option value="borrow_got">They paid me back</option>
+                  <option value="i_paid_them">I paid them for reimbursement</option>
+                  <option value="they_paid_me">They paid me for reimbursement</option>
+                </select>
+                <select id="reimbPaymentPerson" aria-label="Reimbursement person">
+                  <option value="">Person</option>
+                  <option value="other">Other</option>
+                </select>
+                <input id="reimbPaymentPersonOther" type="text" placeholder="Person name" class="grow" style="display:none;" />
+                <input id="reimbPaymentAmount" type="number" step="0.01" min="0" placeholder="Amount" inputmode="decimal" />
+                <select id="reimbPaymentAccount" aria-label="Update account">
+                  <option value="checking">Checking</option>
+                  <option value="savings">Savings</option>
+                  <option value="">Don't update account</option>
+                </select>
+                <input id="reimbPaymentDate" type="date" aria-label="Payment date" />
+                <button type="submit">Add</button>
+              </div>
+              <p id="reimbPaymentStatus" class="status"></p>
+            </form>
             <div class="muted" id="reimbBalance" style="margin-top:10px;font-size:12px;"></div>
             <div id="reimbList" class="expenses" style="margin-top:10px;"></div>
           </div>
@@ -774,8 +822,15 @@ function renderShell() {
           <div>
             <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
               <div style="font-weight:800;">Recent ledger entries</div>
-              <div class="muted" style="font-size:12px;">(income defaults to checking)</div>
+              <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+                <select id="ledgerEntryFilter" aria-label="Filter ledger entries">
+                  <option value="">All entries</option>
+                  <option value="cc_payments">CC payments</option>
+                </select>
+                <div class="muted" style="font-size:12px;">(income defaults to checking)</div>
+              </div>
             </div>
+            <div id="ledgerFilterTotal" class="muted" style="margin-top:6px;font-size:12px;"></div>
             <div id="ledgerList" class="expenses" style="margin-top:10px;"></div>
           </div>
         </div>
@@ -1273,10 +1328,19 @@ function wireLedgerEntryButtons(listEl) {
 }
 
 function renderLedgerListDom(listEl) {
-  const { entries, totalCount, currency } = ledgerListState;
+  const { entries, totalCount, totalAmount, currency } = ledgerListState;
+  const totalEl = document.getElementById('ledgerFilterTotal');
+  if (totalEl) {
+    if (ledgerEntryFilter === 'cc_payments') {
+      totalEl.textContent = `CC payment total: ${formatMoney(currency, Math.abs(Number(totalAmount || 0)))} (${totalCount} entries)`;
+    } else {
+      totalEl.textContent = '';
+    }
+  }
 
   if (!entries.length) {
-    listEl.innerHTML = '<div class="muted" style="font-size:12px;">No ledger entries yet.</div>';
+    const emptyText = ledgerEntryFilter === 'cc_payments' ? 'No credit card payment ledger entries found.' : 'No ledger entries yet.';
+    listEl.innerHTML = `<div class="muted" style="font-size:12px;">${escapeHtml(emptyText)}</div>`;
     return;
   }
 
@@ -1305,6 +1369,7 @@ async function fetchLedgerPage({ offset = 0, append = false } = {}) {
     limit: String(LEDGER_PAGE_SIZE),
     offset: String(offset),
   });
+  if (ledgerEntryFilter) params.set('filter', ledgerEntryFilter);
   const res = await fetchJson(`/api/ledger?${params.toString()}`);
   if (res?.ok === false) throw new Error(res?.error || 'Failed to load ledger');
 
@@ -1313,6 +1378,7 @@ async function fetchLedgerPage({ offset = 0, append = false } = {}) {
   else ledgerListState.entries = newEntries;
 
   ledgerListState.totalCount = Number(res?.totalCount ?? ledgerListState.entries.length);
+  ledgerListState.totalAmount = Number(res?.totalAmount ?? 0);
   ledgerListState.currency = res?.currency || 'USD';
   return res;
 }
@@ -1339,8 +1405,10 @@ async function loadMoreLedgerEntries() {
 async function refreshMoneyLedger() {
   const listEl = document.getElementById('ledgerList');
   const acctEl = document.getElementById('accountTotals');
+  const filterEl = document.getElementById('ledgerEntryFilter');
 
   if (listEl) listEl.innerHTML = '<div class="muted" style="font-size:12px;">Loading…</div>';
+  if (filterEl) filterEl.value = ledgerEntryFilter;
 
   try {
     // Make sure we have the latest receivables balances before computing net worth.
@@ -1794,24 +1862,24 @@ async function refresh() {
       </div>`;
   }
 
+  const receivableRows = summary?.receivables || [];
+  // Expose balances to the Money tab so we can include them in account totals/net worth.
+  // Positive => asset (they owe you), Negative => liability (you owe them)
+  window.__receivables = {};
+  for (const r of receivableRows) {
+    const nameKey = String(r?.counterparty ?? '').trim() || 'unknown';
+    const theyOwe = Number(r?.theyOwe || 0);
+    const iOwe = Number(r?.iOwe || 0);
+    const bal = (Number.isFinite(theyOwe) ? theyOwe : 0) - (Number.isFinite(iOwe) ? iOwe : 0);
+    if (!roundsToZeroCents(bal)) window.__receivables[nameKey] = bal;
+  }
+
   const recvEl = document.getElementById('receivables');
   if (recvEl) {
-    const rows = summary?.receivables || [];
-    // Expose balances to the Money tab so we can include them in account totals/net worth.
-    // Positive => asset (they owe you), Negative => liability (you owe them)
-    window.__receivables = {};
-    for (const r of rows) {
-      const nameKey = String(r?.counterparty ?? '').trim() || 'unknown';
-      const theyOwe = Number(r?.theyOwe || 0);
-      const iOwe = Number(r?.iOwe || 0);
-      const bal = (Number.isFinite(theyOwe) ? theyOwe : 0) - (Number.isFinite(iOwe) ? iOwe : 0);
-      if (bal !== 0) window.__receivables[nameKey] = bal;
-    }
-
-    if (!rows.length) {
+    if (!receivableRows.length) {
       recvEl.textContent = '';
     } else {
-      recvEl.innerHTML = rows
+      recvEl.innerHTML = receivableRows
         .map((r) => {
           const name = nicePersonLabel(r.counterparty);
           if (Number(r.theyOwe || 0) > 0) return `${name} owes you <b>${formatMoney(currency, r.theyOwe)}</b>`;
@@ -1855,7 +1923,8 @@ async function refresh() {
   const reimbEl = document.getElementById('reimb');
   if (reimbEl && reimbSummary) {
     const net = Number(reimbSummary.net || 0);
-    if (net > 0) reimbEl.textContent = `You're owed ${formatMoney(currency, net)} (net)`;
+    if (roundsToZeroCents(net)) reimbEl.textContent = `Balance settled (net ${formatMoney(currency, 0)})`;
+    else if (net > 0) reimbEl.textContent = `You're owed ${formatMoney(currency, net)} (net)`;
     else if (net < 0) reimbEl.textContent = `You owe ${formatMoney(currency, Math.abs(net))} (net)`;
     else reimbEl.textContent = `Balance settled (net ${formatMoney(currency, 0)})`;
   }
@@ -1950,16 +2019,22 @@ async function refresh() {
   renderExpensesListDom();
 
   // Populate parties dropdown (multi-person support)
+  const partiesResp = await fetchJson('/api/reimbursements/parties');
+  const reimbursementParties = Array.isArray(partiesResp.parties) ? partiesResp.parties : [];
+  const receivableParties = (summary?.receivables || []).map((r) => r?.counterparty).filter(Boolean);
+  const peopleOptions = Array.from(new Set([...getRecentPeople(), ...reimbursementParties, ...receivableParties]))
+    .map((p) => String(p || '').trim())
+    .filter((p) => p && p !== 'Someone')
+    .sort((a, b) => nicePersonLabel(a).localeCompare(nicePersonLabel(b)));
+
   const partyEl = document.getElementById('partyFilter');
   if (partyEl) {
-    const partiesResp = await fetchJson('/api/reimbursements/parties');
-    const parties = Array.isArray(partiesResp.parties) ? partiesResp.parties : [];
     const current = partyEl.value;
     partyEl.innerHTML = '<option value="">All people</option>';
-    for (const p of parties) {
+    for (const p of peopleOptions) {
       const opt = document.createElement('option');
       opt.value = p;
-      opt.textContent = p;
+      opt.textContent = nicePersonLabel(p);
       partyEl.appendChild(opt);
     }
     partyEl.value = current;
@@ -1967,10 +2042,24 @@ async function refresh() {
     // Also use these parties to populate the “100% for someone” dropdown.
     const forOtherPersonEl = document.getElementById('forOtherPerson');
     if (forOtherPersonEl) {
-      const merged = Array.from(new Set([...getRecentPeople(), ...parties]))
-        .map(nicePersonLabel)
-        .filter((x) => x && x !== 'Someone');
-      setPersonSelectOptions(forOtherPersonEl, merged);
+      setPersonSelectOptions(forOtherPersonEl, peopleOptions.map(nicePersonLabel));
+    }
+
+    const reimbPaymentPersonEl = document.getElementById('reimbPaymentPerson');
+    if (reimbPaymentPersonEl) {
+      const paymentCurrent = reimbPaymentPersonEl.value;
+      reimbPaymentPersonEl.innerHTML = '<option value="">Person</option><option value="other">Other</option>';
+      const otherOpt = reimbPaymentPersonEl.querySelector('option[value="other"]');
+      for (const p of peopleOptions) {
+        const raw = String(p || '').trim();
+        if (!raw) continue;
+        const opt = document.createElement('option');
+        opt.value = raw;
+        opt.textContent = nicePersonLabel(raw);
+        reimbPaymentPersonEl.insertBefore(opt, otherOpt);
+      }
+      reimbPaymentPersonEl.value = current || paymentCurrent;
+      if (reimbPaymentPersonEl.value !== (current || paymentCurrent)) reimbPaymentPersonEl.value = '';
     }
   }
 
@@ -1978,16 +2067,30 @@ async function refresh() {
   const party = document.getElementById('partyFilter')?.value || '';
   const reimbQuery = new URLSearchParams({ limit: '200', ...(party ? { otherParty: party } : {}) });
   const reimbResp = await fetchJson(`/api/reimbursements?${reimbQuery.toString()}`);
+  const receivableLedgerResp = party
+    ? await fetchJson(`/api/ledger?${new URLSearchParams({ limit: '200', type: 'receivable', counterparty: party }).toString()}`)
+    : null;
+  const reimbursementBalancesForPeople = party
+    ? [{ otherParty: party, net: Number(reimbResp?.balance?.net || 0) }]
+    : Array.isArray(reimbResp?.partyBalances)
+      ? reimbResp.partyBalances
+      : [];
+  const peopleBalances = buildPeopleBalances(summary, reimbursementBalancesForPeople);
+  const visiblePeopleBalances = peopleBalances.filter((p) => !roundsToZeroCents(p.net));
+  const activePeopleBalances = party ? peopleBalances.filter((p) => personKey(p.rawName) === personKey(party)) : peopleBalances;
+  const peopleNet = activePeopleBalances.reduce((sum, p) => sum + Number(p.net || 0), 0);
 
   const reimbBalanceEl = document.getElementById('reimbBalance');
-  if (reimbBalanceEl && reimbResp?.balance) {
-    const net = Number(reimbResp.balance.net || 0);
+  if (reimbBalanceEl) {
+    const net = peopleNet;
     if (party) {
-      if (net > 0) reimbBalanceEl.textContent = `${party} owes you ${formatMoney(currency, net)} (net)`;
+      if (roundsToZeroCents(net)) reimbBalanceEl.textContent = `Settled with ${party} (net ${formatMoney(currency, 0)})`;
+      else if (net > 0) reimbBalanceEl.textContent = `${party} owes you ${formatMoney(currency, net)} (net)`;
       else if (net < 0) reimbBalanceEl.textContent = `You owe ${party} ${formatMoney(currency, Math.abs(net))} (net)`;
       else reimbBalanceEl.textContent = `Settled with ${party} (net ${formatMoney(currency, 0)})`;
     } else {
-      if (net > 0) reimbBalanceEl.textContent = `Others owe you ${formatMoney(currency, net)} (net)`;
+      if (roundsToZeroCents(net)) reimbBalanceEl.textContent = `All reimbursements settled (net ${formatMoney(currency, 0)})`;
+      else if (net > 0) reimbBalanceEl.textContent = `Others owe you ${formatMoney(currency, net)} (net)`;
       else if (net < 0) reimbBalanceEl.textContent = `You owe others ${formatMoney(currency, Math.abs(net))} (net)`;
       else reimbBalanceEl.textContent = `All reimbursements settled (net ${formatMoney(currency, 0)})`;
     }
@@ -1997,27 +2100,18 @@ async function refresh() {
   if (reimbRoot) {
     reimbRoot.innerHTML = '';
 
-    const rows = reimbResp.reimbursements || [];
+    const rows = (reimbResp.reimbursements || []).filter((r) => !roundsToZeroCents(r?.amount));
 
     // If no person is selected, show one server-computed net row per person.
     if (!party) {
-      const serverBalances = Array.isArray(reimbResp.partyBalances) ? reimbResp.partyBalances : [];
-      const items = serverBalances
-        .map((r) => ({
-          who: nicePersonLabel(r.otherParty),
-          net: Number(r.net || 0),
-        }))
-        .filter((x) => Math.abs(x.net) > 0.00001)
-        .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
-
-      if (!items.length) {
+      if (!visiblePeopleBalances.length) {
         const div = document.createElement('div');
         div.className = 'muted';
         div.style.fontSize = '12px';
-        div.textContent = 'No reimbursements yet.';
+        div.textContent = 'No open people balances.';
         reimbRoot.appendChild(div);
       } else {
-        for (const it of items) {
+        for (const it of visiblePeopleBalances) {
           const div = document.createElement('div');
           div.className = 'expense';
 
@@ -2026,11 +2120,14 @@ async function refresh() {
 
           const title = document.createElement('div');
           title.className = 'title';
-          title.textContent = it.net > 0 ? `${it.who} owes you` : `You owe ${it.who}`;
+          title.textContent = it.net > 0 ? `${it.displayName} owes you` : `You owe ${it.displayName}`;
 
           const meta = document.createElement('div');
           meta.className = 'meta';
-          meta.textContent = 'Net total (all time)';
+          const metaParts = [];
+          if (!roundsToZeroCents(it.receivableNet)) metaParts.push(`Borrow/lend ${formatMoney(currency, it.receivableNet)}`);
+          if (!roundsToZeroCents(it.reimbursementNet)) metaParts.push(`Reimbursements ${formatMoney(currency, it.reimbursementNet)}`);
+          meta.textContent = metaParts.length ? metaParts.join(' · ') : 'Net total (all time)';
 
           left.appendChild(title);
           left.appendChild(meta);
@@ -2046,7 +2143,50 @@ async function refresh() {
       }
     } else {
       // Person selected: show detailed line items.
-      for (const r of rows) {
+      const receivableRows = (receivableLedgerResp?.entries || []).filter((r) => !roundsToZeroCents(r?.amount));
+      const detailRows = [
+        ...rows.map((r) => ({
+          id: r.id,
+          kind: 'reimbursement',
+          occurredOn: String(r.occurredOn || '').slice(0, 10),
+          title: r.direction === 'they_owe_me' ? `${nicePersonLabel(r.otherParty)} owes you` : `You owe ${nicePersonLabel(r.otherParty)}`,
+          meta: `Reimbursement · ${r.rawText || r.note || ''}`,
+          amount: Number(r.amount || 0),
+          currency: r.currency || currency,
+          canDelete: !r.expenseId && String(r.note || '').startsWith('reimbursement_payment_'),
+        })),
+        ...receivableRows.map((r) => {
+          const direction = String(r.direction || '');
+          const who = nicePersonLabel(r.counterparty || party);
+          const titleMap = {
+            i_lent: `${who} owes you`,
+            i_borrowed: `You owe ${who}`,
+            repay: `You paid ${who} back`,
+            collect: `${who} paid you back`,
+          };
+          return {
+            id: r.id,
+            kind: 'borrow/lend',
+            occurredOn: String(r.occurredOn || '').slice(0, 10),
+            title: titleMap[direction] || `Borrow/lend with ${who}`,
+            meta: `Borrow/lend · ${r.rawText || r.note || ''}`,
+            amount: Number(r.amount || 0),
+            currency: r.currency || currency,
+            canDelete: false,
+          };
+        }),
+      ].sort((a, b) => String(b.occurredOn).localeCompare(String(a.occurredOn)));
+
+      if (!detailRows.length) {
+        const div = document.createElement('div');
+        div.className = 'muted';
+        div.style.fontSize = '12px';
+        div.textContent = 'No open people balance entries.';
+        reimbRoot.appendChild(div);
+        return;
+      }
+
+      for (const r of detailRows) {
         const div = document.createElement('div');
         div.className = 'expense';
 
@@ -2055,12 +2195,11 @@ async function refresh() {
 
         const title = document.createElement('div');
         title.className = 'title';
-        const who = r.otherParty || 'someone';
-        title.textContent = r.direction === 'they_owe_me' ? `${who} owes you` : `You owe ${who}`;
+        title.textContent = r.title;
 
         const meta = document.createElement('div');
         meta.className = 'meta';
-        meta.textContent = `${r.occurredOn} • ${r.rawText}`;
+        meta.textContent = `${r.occurredOn} • ${r.meta}`;
 
         left.appendChild(title);
         left.appendChild(meta);
@@ -2069,8 +2208,30 @@ async function refresh() {
         amt.className = 'amount';
         amt.textContent = formatMoney(r.currency || currency, r.amount);
 
+        const right = document.createElement('div');
+        right.className = 'row';
+        right.style.alignItems = 'center';
+        right.style.gap = '8px';
+        right.style.justifyContent = 'flex-end';
+        right.style.flexWrap = 'wrap';
+        right.appendChild(amt);
+
+        if (r.canDelete && r.id) {
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'chip danger';
+          del.textContent = 'Delete';
+          del.addEventListener('click', async () => {
+            if (!confirm('Delete this reimbursement payment?')) return;
+            const resp = await fetchJsonOrThrow(`/api/reimbursements/${encodeURIComponent(r.id)}`, { method: 'DELETE' });
+            if (resp?.ok === false) throw new Error(resp?.error || 'Delete failed');
+            await refreshMoneyLedger();
+          });
+          right.appendChild(del);
+        }
+
         div.appendChild(left);
-        div.appendChild(amt);
+        div.appendChild(right);
         reimbRoot.appendChild(div);
       }
     }
@@ -2677,7 +2838,130 @@ function wireEvents() {
   const partyEl = document.getElementById('partyFilter');
   if (partyEl) {
     partyEl.addEventListener('change', async () => {
+      const paymentPersonEl = document.getElementById('reimbPaymentPerson');
+      if (paymentPersonEl && partyEl.value) paymentPersonEl.value = partyEl.value;
       await refresh();
+    });
+  }
+
+  const reimbPaymentPersonEl = document.getElementById('reimbPaymentPerson');
+  const reimbPaymentPersonOtherEl = document.getElementById('reimbPaymentPersonOther');
+  const toggleReimbPaymentOther = () => {
+    if (!reimbPaymentPersonEl || !reimbPaymentPersonOtherEl) return;
+    const show = reimbPaymentPersonEl.value === 'other';
+    reimbPaymentPersonOtherEl.style.display = show ? 'block' : 'none';
+    if (!show) reimbPaymentPersonOtherEl.value = '';
+  };
+  if (reimbPaymentPersonEl) {
+    reimbPaymentPersonEl.addEventListener('change', toggleReimbPaymentOther);
+    toggleReimbPaymentOther();
+  }
+
+  const reimbPaymentDateEl = document.getElementById('reimbPaymentDate');
+  if (reimbPaymentDateEl && !reimbPaymentDateEl.value) {
+    reimbPaymentDateEl.value = new Date().toISOString().slice(0, 10);
+  }
+
+  const reimbPaymentForm = document.getElementById('reimbPaymentForm');
+  if (reimbPaymentForm) {
+    reimbPaymentForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const status = document.getElementById('reimbPaymentStatus');
+      if (status) {
+        status.textContent = '';
+        status.className = 'status';
+      }
+
+      const action = String(document.getElementById('reimbPaymentAction')?.value || '').trim();
+      const selectedPerson = String(document.getElementById('reimbPaymentPerson')?.value || '').trim();
+      const otherPerson = String(document.getElementById('reimbPaymentPersonOther')?.value || '').trim();
+      const otherParty = selectedPerson === 'other' ? nicePersonLabel(otherPerson) : selectedPerson;
+      const amount = Number(String(document.getElementById('reimbPaymentAmount')?.value || '').replace(/[^0-9.-]+/g, ''));
+      const account = String(document.getElementById('reimbPaymentAccount')?.value || '').trim();
+      const occurredOn = String(document.getElementById('reimbPaymentDate')?.value || '').trim();
+
+      try {
+        if (!otherParty) throw new Error('Select or enter a person.');
+        if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a positive amount.');
+        const currency = window.__summary?.currency || ledgerListState.currency || 'USD';
+        const accountLabel = niceAccountLabel(account);
+        const accountText = accountLabel ? ` Updated ${accountLabel}.` : '';
+
+        const borrowActions = {
+          borrow_took: { dir: 'i_borrowed', verb: 'Borrowed', accountDelta: amount },
+          borrow_gave: { dir: 'i_lent', verb: 'Lent', accountDelta: 0 - amount },
+          borrow_return: { dir: 'repay', verb: 'Paid back', accountDelta: 0 - amount },
+          borrow_got: { dir: 'collect', verb: 'Collected', accountDelta: amount },
+        };
+        const borrow = borrowActions[action];
+
+        if (borrow) {
+          const dateSuffix = occurredOn ? ` ${occurredOn}` : '';
+          if (account) {
+            await fetchJsonOrThrow('/api/ledger', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                text: `${borrow.accountDelta} type:income account:${account}${dateSuffix}`,
+                source: 'web',
+              }),
+            });
+          }
+
+          await fetchJsonOrThrow('/api/ledger', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              text: `${borrow.verb} ${amount} receivable type:receivable counterparty:${nicePersonLabel(otherParty)} direction:${borrow.dir}${dateSuffix}`,
+              source: 'web',
+            }),
+          });
+
+          if (status) {
+            status.textContent = `Added.${accountText}`;
+            status.className = 'status ok';
+          }
+        } else {
+          const result = await fetchJsonOrThrow('/api/reimbursements/payment', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action, otherParty, amount, occurredOn, account }),
+          });
+          const balance = Number(result?.balance?.net || 0);
+          const resultCurrency = result?.reimbursement?.currency || currency;
+          const resultAccountLabel = niceAccountLabel(result?.ledgerEntry?.account);
+          const resultAccountText = resultAccountLabel ? ` Updated ${resultAccountLabel}.` : '';
+          if (status) {
+            if (roundsToZeroCents(balance)) status.textContent = `Recorded. Balance is settled.${resultAccountText}`;
+            else if (balance > 0)
+              status.textContent = `Recorded. ${nicePersonLabel(otherParty)} owes you ${formatMoney(resultCurrency, balance)}.${resultAccountText}`;
+            else
+              status.textContent = `Recorded. You owe ${nicePersonLabel(otherParty)} ${formatMoney(
+                resultCurrency,
+                Math.abs(balance)
+              )}.${resultAccountText}`;
+            status.className = 'status ok';
+          }
+        }
+        const amountEl = document.getElementById('reimbPaymentAmount');
+        if (amountEl) amountEl.value = '';
+        if (selectedPerson === 'other') addRecentPerson(otherParty);
+        await refreshMoneyLedger();
+      } catch (err) {
+        if (status) {
+          status.textContent = err?.message || String(err);
+          status.className = 'status error';
+        }
+      }
+    });
+  }
+
+  const ledgerEntryFilterEl = document.getElementById('ledgerEntryFilter');
+  if (ledgerEntryFilterEl) {
+    ledgerEntryFilterEl.value = ledgerEntryFilter;
+    ledgerEntryFilterEl.addEventListener('change', async () => {
+      ledgerEntryFilter = ledgerEntryFilterEl.value || '';
+      await refreshMoneyLedger();
     });
   }
 
@@ -2915,7 +3199,6 @@ function wireEvents() {
         for (const b of submitBtns) b.disabled = false;
         return;
       }
-
       // Add flow (existing): optionally also deduct from checking.
       // Subtract flow: always represents money leaving checking (a debit).
       // - For cc_payment: subtract always means debit checking.
@@ -3065,111 +3348,6 @@ function wireEvents() {
   }
 
   // Money is a full tab now, so money tools are always visible inside that panel.
-
-  const recvForm = document.getElementById('recvForm');
-  if (recvForm) {
-    const recvActionEl = document.getElementById('recvAction');
-    const recvDeductRow = document.getElementById('recvDeductRow');
-    const recvDeductFromEl = document.getElementById('recvDeductFrom');
-
-    const syncRecvDeductVisibility = () => {
-      const action = String(recvActionEl?.value || 'took');
-      if (recvDeductRow) recvDeductRow.style.display = action === 'gave' ? 'flex' : 'none';
-      if (action !== 'gave' && recvDeductFromEl) recvDeductFromEl.value = '';
-    };
-    recvActionEl?.addEventListener('change', syncRecvDeductVisibility);
-    syncRecvDeductVisibility();
-
-    recvForm.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const status = document.getElementById('recvStatus');
-      if (status) status.textContent = '';
-
-      const action = String(document.getElementById('recvAction')?.value || 'took');
-      const person = String(document.getElementById('recvPerson')?.value || '').trim();
-  const amount = String(document.getElementById('recvAmount')?.value || '').trim();
-  let deductFrom = String(recvDeductFromEl?.value || '').trim();
-
-      if (!person) {
-        if (status) status.textContent = 'Enter a person.';
-        return;
-      }
-      if (!amount || Number(amount) <= 0) {
-        if (status) status.textContent = 'Enter a positive amount.';
-        return;
-      }
-
-      // Map UX actions to direction semantics.
-      // - took from kevin => i_borrowed (I owe Kevin)
-      // - gave to kevin => i_lent (Kevin owes me)
-      // - returned to kevin => repay (reduces what I owe)
-      // - got back from kevin => collect (reduces what Kevin owes)
-      const map = {
-        took: { dir: 'i_borrowed', verb: 'Took' },
-        gave: { dir: 'i_lent', verb: 'Gave' },
-        return: { dir: 'repay', verb: 'Returned' },
-        got: { dir: 'collect', verb: 'Got back' },
-      };
-      const m = map[action] || map.took;
-      const msg = `${m.verb} ${amount} receivable type:receivable counterparty:${nicePersonLabel(person)} direction:${m.dir}`;
-
-      try {
-        // Normalize amount to a strict positive number (strip commas/currency symbols).
-  const amtClean = amount.replace(/[^0-9.-]+/g, '');
-        const amtNum = Math.abs(Number(amtClean));
-        if (!Number.isFinite(amtNum) || amtNum <= 0) throw new Error('Enter a valid positive amount.');
-
-        // Strict: create both entries together. For repay, post checking debit first; if it fails, skip receivable update.
-        if (m.dir === 'repay') {
-          const negAmt = 0 - amtNum;
-          const chkText = `${negAmt} type:income account:checking note:deduct_for_repay`;
-
-          await fetchJsonOrThrow('/api/ledger', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ text: chkText, source: 'web' }),
-          });
-        }
-
-        // When we collect (got back), also add cash to checking before updating receivables.
-        if (m.dir === 'collect') {
-          const chkText = `${amtNum} type:income account:checking note:collect_receivable`;
-          await fetchJsonOrThrow('/api/ledger', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ text: chkText, source: 'web' }),
-          });
-        }
-
-        // If we lent (gave) and user wants to deduct cash from checking/savings, post that debit first.
-        if (action === 'gave') {
-          // Default to checking unless user explicitly chose "Don't deduct".
-          if (!deductFrom) deductFrom = 'checking';
-
-          if (deductFrom === 'checking' || deductFrom === 'savings') {
-            const acct = deductFrom === 'savings' ? 'savings' : 'checking';
-            const chkText = `${0 - amtNum} type:income account:${acct} note:deduct_for_lend`;
-            await fetchJsonOrThrow('/api/ledger', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ text: chkText, source: 'web' }),
-            });
-          }
-        }
-
-        await fetchJsonOrThrow('/api/ledger', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: msg, source: 'web' }),
-        });
-
-        if (status) status.textContent = 'Added.';
-        await refreshMoneyLedger();
-      } catch (err) {
-        if (status) status.textContent = err?.message || String(err);
-      }
-    });
-  }
 }
 
 renderShell();

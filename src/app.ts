@@ -24,6 +24,7 @@ import {
   listReimbursementBalancesByParty,
   listReimbursements,
   listOtherParties,
+  deleteReimbursementById,
 } from './db-pg/reimbursementsRepo.js';
 import {
   insertLedgerEntry,
@@ -32,10 +33,12 @@ import {
   getSalaryByMonth,
   getReceivableBalances,
   findLedgerEntryByNote,
+  findLedgerEntryById,
   updateLedgerEntry,
   deleteLedgerEntry,
   getAccountBuckets,
   countLedgerEntries,
+  sumLedgerEntries,
 } from './db-pg/ledgerRepo.js';
 
 const CURRENCY = process.env.CURRENCY ?? 'USD';
@@ -773,27 +776,34 @@ app.get('/api/ledger', async (req: Request, res: Response) => {
   const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
   const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
   const type = typeof req.query.type === 'string' ? req.query.type : undefined;
+  const filter = typeof req.query.filter === 'string' ? req.query.filter : '';
+  const counterparty = typeof req.query.counterparty === 'string' ? req.query.counterparty.trim() : undefined;
 
-  const allowed = new Set(['income', 'transfer', 'investment', 'liability']);
+  const allowed = new Set(['income', 'transfer', 'investment', 'liability', 'receivable']);
   const t = type && allowed.has(type) ? (type as any) : undefined;
+  const ccPaymentsOnly = filter === 'cc_payments';
   const includeMeta = offset == null || offset === 0;
 
-  const [entries, accountBuckets, totalCount] = await Promise.all([
-    listLedgerEntries({ limit, offset, from: fromYmd, to: toYmd, type: t }),
+  const [entries, accountBuckets, totalCount, totalAmount] = await Promise.all([
+    listLedgerEntries({ limit, offset, from: fromYmd, to: toYmd, type: t, counterparty, ccPaymentsOnly }),
     includeMeta ? getAccountBuckets({ currency: CURRENCY }) : Promise.resolve(undefined),
-    countLedgerEntries({ from: fromYmd, to: toYmd, type: t }),
+    countLedgerEntries({ from: fromYmd, to: toYmd, type: t, counterparty, ccPaymentsOnly }),
+    sumLedgerEntries({ from: fromYmd, to: toYmd, type: t, counterparty, ccPaymentsOnly }),
   ]);
   res.json({
     ok: true,
     entries,
     ...(accountBuckets ? { accountBuckets } : {}),
     totalCount,
+    totalAmount,
     limit,
     offset: offset ?? 0,
     currency: CURRENCY,
     from: fromYmd,
     to: toYmd,
     type: t ?? '',
+    counterparty: counterparty ?? '',
+    filter,
   });
 });
 
@@ -833,9 +843,12 @@ app.patch('/api/ledger/:id', async (req: Request, res: Response) => {
 app.delete('/api/ledger/:id', async (req: Request, res: Response) => {
   const id = String(req.params.id || '').trim();
   if (!id) return res.status(400).json({ ok: false, error: 'Missing id' });
+  const entry = await findLedgerEntryById({ id });
+  if (!entry) return res.status(404).json({ ok: false, error: 'Not found' });
   const ok = await deleteLedgerEntry({ id });
   if (!ok) return res.status(404).json({ ok: false, error: 'Not found' });
-  return res.json({ ok: true });
+  const deletedReimbursement = entry.reimbursementId ? await deleteReimbursementById({ id: entry.reimbursementId }) : false;
+  return res.json({ ok: true, deletedReimbursement });
 });
 
 app.get('/api/reimbursements', async (req: Request, res: Response) => {
@@ -849,6 +862,97 @@ app.get('/api/reimbursements', async (req: Request, res: Response) => {
   const partyBalances = otherParty ? [] : await listReimbursementBalancesByParty({ currency: CURRENCY });
 
   res.json({ ok: true, currency: CURRENCY, reimbursements: rows, balance, partyBalances, from: fromYmd, to: toYmd, otherParty });
+});
+
+app.delete('/api/reimbursements/:id', async (req: Request, res: Response) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ ok: false, error: 'Missing id' });
+
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existing = await client.query(
+      `SELECT id, expense_id, note
+       FROM reimbursements
+       WHERE id = $1
+       FOR UPDATE`,
+      [id]
+    );
+    const row = existing.rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Not found' });
+    }
+
+    const note = String(row.note || '');
+    if (row.expense_id || !note.startsWith('reimbursement_payment_')) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, error: 'Only standalone reimbursement payments can be deleted here.' });
+    }
+
+    const ledgerDelete = await client.query(`DELETE FROM ledger_entries WHERE reimbursement_id = $1`, [id]);
+    await client.query(`DELETE FROM reimbursements WHERE id = $1`, [id]);
+    await client.query('COMMIT');
+
+    return res.json({ ok: true, deletedLedgerEntries: ledgerDelete.rowCount ?? 0 });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/reimbursements/payment', async (req: Request, res: Response) => {
+  const body = req.body ?? {};
+  const action = typeof body.action === 'string' ? body.action : '';
+  const otherParty = typeof body.otherParty === 'string' ? body.otherParty.trim() : '';
+  const amount = Number(body.amount);
+  const account = typeof body.account === 'string' ? body.account.trim().toLowerCase() : '';
+  const occurredOn =
+    typeof body.occurredOn === 'string' && body.occurredOn.trim() ? body.occurredOn.trim() : new Date().toISOString().slice(0, 10);
+
+  if (action !== 'i_paid_them' && action !== 'they_paid_me') {
+    return res.status(400).json({ ok: false, error: 'Choose whether you paid them or they paid you.' });
+  }
+  if (!otherParty) return res.status(400).json({ ok: false, error: 'Person is required.' });
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ ok: false, error: 'Amount must be positive.' });
+  if (account && account !== 'checking' && account !== 'savings') {
+    return res.status(400).json({ ok: false, error: 'Account must be checking or savings.' });
+  }
+
+  const direction = action === 'i_paid_them' ? 'they_owe_me' : 'i_owe_them';
+  const label = action === 'i_paid_them' ? 'I paid them' : 'They paid me';
+  const row = await insertReimbursement({
+    occurredOn,
+    source: 'web',
+    otherParty,
+    direction,
+    amount,
+    currency: CURRENCY,
+    note: `reimbursement_payment_${action}`,
+    rawText: `${label} ${CURRENCY} ${amount} ${otherParty}`,
+  });
+
+  const ledgerEntry = account
+    ? await insertLedgerEntry({
+        occurredOn,
+        source: 'web',
+        rawText: `${label} reimbursement ${CURRENCY} ${amount} ${otherParty} account:${account}`,
+        type: 'income',
+        amount: action === 'i_paid_them' ? 0 - amount : amount,
+        currency: CURRENCY,
+        counterparty: otherParty,
+        account,
+        note: `reimbursement_payment_${action}`,
+        reimbursementId: row.id,
+      })
+    : null;
+
+  const balance = await getReimbursementBalance({ otherParty, currency: CURRENCY });
+  return res.json({ ok: true, reimbursement: row, ledgerEntry, balance });
 });
 
 app.get('/api/reimbursements/parties', async (_req: Request, res: Response) => {

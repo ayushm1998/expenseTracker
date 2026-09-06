@@ -238,3 +238,10 @@ export async function listOtherParties(args?: { currency?: string }): Promise<st
   );
   return res.rows.map((r) => String(r.other_party));
 }
+
+export async function deleteReimbursementById(args: { id: string }): Promise<boolean> {
+  await ensureSchema();
+  const pool = getPool();
+  const res = await pool.query(`DELETE FROM reimbursements WHERE id = $1`, [args.id]);
+  return (res.rowCount ?? 0) > 0;
+}
