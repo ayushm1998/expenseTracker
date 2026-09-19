@@ -1656,10 +1656,14 @@ async function loadMoreExpenses() {
 
   const expQ = expensesMonthToQuery();
   const cardFilter = document.getElementById('cardFilter')?.value || '';
+  const expensesViewFilter = String(document.getElementById('expensesFilter')?.value || 'all');
+  const expensesViewParam = expensesViewFilter && expensesViewFilter !== 'all' ? expensesViewFilter : '';
   const baseParams = {
     ...(expQ.from ? { from: expQ.from } : {}),
     ...(expQ.to ? { to: expQ.to } : {}),
     ...(cardFilter ? { card: cardFilter } : {}),
+    ...(expensesCategoryFilter ? { category: expensesCategoryFilter } : {}),
+    ...(expensesViewParam ? { view: expensesViewParam } : {}),
   };
 
   expensesListLoadingMore = true;
@@ -1683,6 +1687,8 @@ async function refresh() {
   const cardFilter = document.getElementById('cardFilter')?.value || '';
   // Expenses tab uses the same card filter dropdown (#cardFilter).
   const expensesCardFilter = cardFilter;
+  const expensesViewFilter = String(document.getElementById('expensesFilter')?.value || 'all');
+  const expensesViewParam = expensesViewFilter && expensesViewFilter !== 'all' ? expensesViewFilter : '';
   const expQ = expensesMonthToQuery();
   // For charts/summary, we want the selected-range filter (week/month/year/custom/all).
   // For the Expenses tab list, we want its independent month filter.
@@ -1714,15 +1720,27 @@ async function refresh() {
     ...(expQ.from ? { from: expQ.from } : {}),
     ...(expQ.to ? { to: expQ.to } : {}),
     ...(expensesCardFilter ? { card: expensesCardFilter } : {}),
+    ...(expensesCategoryFilter ? { category: expensesCategoryFilter } : {}),
+    ...(expensesViewParam ? { view: expensesViewParam } : {}),
   };
   await fetchExpensesPage({ baseParams: listBaseParams, offset: 0, append: false });
   const expensesList = { expenses: expensesListState.rows, totals: expensesListState.totals };
 
+  const expCategoryOptionsResp = await fetchJson(
+    `/api/expenses/categories?${new URLSearchParams({
+      ...(expQ.from ? { from: expQ.from } : {}),
+      ...(expQ.to ? { to: expQ.to } : {}),
+      ...(expensesCardFilter ? { card: expensesCardFilter } : {}),
+      ...(expensesViewParam ? { view: expensesViewParam } : {}),
+    }).toString()}`
+  );
   const expCategoriesResp = await fetchJson(
     `/api/expenses/categories?${new URLSearchParams({
       ...(expQ.from ? { from: expQ.from } : {}),
       ...(expQ.to ? { to: expQ.to } : {}),
       ...(expensesCardFilter ? { card: expensesCardFilter } : {}),
+      ...(expensesCategoryFilter ? { category: expensesCategoryFilter } : {}),
+      ...(expensesViewParam ? { view: expensesViewParam } : {}),
     }).toString()}`
   );
 
@@ -1743,11 +1761,18 @@ async function refresh() {
   // Expenses tab: populate category filter options from server totals (all rows in range).
   const expensesCategoryEl = document.getElementById('expensesCategoryFilter');
   if (expensesCategoryEl) {
-    const cats = Array.isArray(expCategoriesResp?.totals)
-      ? expCategoriesResp.totals
+    const cats = Array.isArray(expCategoryOptionsResp?.totals)
+      ? expCategoryOptionsResp.totals
           .map((t) => String(t.category || 'misc').trim().toLowerCase())
           .filter(Boolean)
       : [];
+
+    if (expensesCategoryFilter && !cats.includes(expensesCategoryFilter)) {
+      expensesCategoryFilter = '';
+      expensesCategoryEl.value = '';
+      await refresh();
+      return;
+    }
 
     expensesCategoryEl.innerHTML = '<option value="">All categories</option>';
     for (const c of cats) {

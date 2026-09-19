@@ -457,9 +457,11 @@ app.get('/api/expenses', async (req: Request, res: Response) => {
   const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
   const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
   const card = typeof req.query.card === 'string' ? req.query.card : undefined;
+  const category = typeof req.query.category === 'string' && req.query.category.trim() ? req.query.category.trim() : undefined;
+  const view = typeof req.query.view === 'string' && req.query.view.trim() ? req.query.view.trim() : undefined;
   const [expenses, meta] = await Promise.all([
-    listExpenses({ limit, offset, from: fromYmd, to: toYmd, card }),
-    getExpenseListMeta({ from: fromYmd, to: toYmd, card }),
+    listExpenses({ limit, offset, from: fromYmd, to: toYmd, card, category, view }),
+    getExpenseListMeta({ from: fromYmd, to: toYmd, card, category, view }),
   ]);
   res.json({
     ok: true,
@@ -472,6 +474,8 @@ app.get('/api/expenses', async (req: Request, res: Response) => {
     from: fromYmd,
     to: toYmd,
     card,
+    category,
+    view,
   });
 });
 
@@ -479,9 +483,11 @@ app.get('/api/expenses/categories', async (req: Request, res: Response) => {
   const fromYmd = typeof req.query.from === 'string' ? req.query.from : undefined;
   const toYmd = typeof req.query.to === 'string' ? req.query.to : undefined;
   const card = typeof req.query.card === 'string' ? req.query.card : undefined;
+  const category = typeof req.query.category === 'string' && req.query.category.trim() ? req.query.category.trim() : undefined;
+  const view = typeof req.query.view === 'string' && req.query.view.trim() ? req.query.view.trim() : undefined;
 
-  const totals = await listCategoryTotals({ from: fromYmd, to: toYmd, card, currency: CURRENCY });
-  res.json({ ok: true, totals, currency: CURRENCY, from: fromYmd, to: toYmd, card });
+  const totals = await listCategoryTotals({ from: fromYmd, to: toYmd, card, category, view, currency: CURRENCY });
+  res.json({ ok: true, totals, currency: CURRENCY, from: fromYmd, to: toYmd, card, category, view });
 });
 
 app.delete('/api/expenses/:id', async (req: Request, res: Response) => {

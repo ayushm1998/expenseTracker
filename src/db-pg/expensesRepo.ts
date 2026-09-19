@@ -36,7 +36,7 @@ export function isCardRequiredForParsedExpense(parsed: Pick<ParsedExpense, 'paid
   return (parsed.paidBy ?? 'me') === 'me';
 }
 
-function buildExpenseWhereClause(args: { from?: string; to?: string; card?: string }): {
+function buildExpenseWhereClause(args: { from?: string; to?: string; card?: string; category?: string; view?: string }): {
   where: string;
   params: Array<string>;
 } {
@@ -58,6 +58,17 @@ function buildExpenseWhereClause(args: { from?: string; to?: string; card?: stri
       where += ` AND card = $${params.length}`;
     }
   }
+  if (args.category) {
+    params.push(args.category.trim().toLowerCase());
+    where += ` AND lower(COALESCE(NULLIF(TRIM(category), ''), 'misc')) = $${params.length}`;
+  }
+  if (args.view === 'split') {
+    where += ` AND split_type IS NOT NULL AND split_type <> '' AND split_type <> 'none'`;
+  } else if (args.view === 'onlyMe') {
+    where += ` AND (split_type IS NULL OR split_type = '' OR split_type = 'none')`;
+  } else if (args.view === 'roommatePaid') {
+    where += ` AND paid_by = 'roommate'`;
+  }
   return { where, params };
 }
 
@@ -65,6 +76,8 @@ export async function getExpenseListMeta(args: {
   from?: string;
   to?: string;
   card?: string;
+  category?: string;
+  view?: string;
 }): Promise<{ totalCount: number; billedTotal: number; shareTotal: number }> {
   await ensureSchema();
   const pool = getPool();
@@ -160,7 +173,15 @@ export async function insertExpense(args: {
   };
 }
 
-export async function listExpenses(args: { limit: number; offset?: number; from?: string; to?: string; card?: string }): Promise<Expense[]> {
+export async function listExpenses(args: {
+  limit: number;
+  offset?: number;
+  from?: string;
+  to?: string;
+  card?: string;
+  category?: string;
+  view?: string;
+}): Promise<Expense[]> {
   await ensureSchema();
   const pool = getPool();
 
@@ -209,30 +230,16 @@ export async function listCategoryTotals(args: {
   from?: string;
   to?: string;
   card?: string;
+  category?: string;
+  view?: string;
   currency?: string;
 }): Promise<Array<{ category: string; billed_total: number; share_total: number }>> {
   await ensureSchema();
   const pool = getPool();
 
-  const params: Array<string> = [];
-  let where = 'TRUE';
-  if (args.from) {
-    params.push(args.from);
-    where += ` AND occurred_on >= $${params.length}`;
-  }
-  if (args.to) {
-    params.push(args.to);
-    where += ` AND occurred_on <= $${params.length}`;
-  }
-
-  if (args.card) {
-    if (args.card === 'none') {
-      where += ` AND (card IS NULL OR card = '')`;
-    } else {
-      params.push(args.card);
-      where += ` AND card = $${params.length}`;
-    }
-  }
+  const { where: baseWhere, params: baseParams } = buildExpenseWhereClause(args);
+  const params: Array<string> = [...baseParams];
+  let where = baseWhere;
 
   if (args.currency) {
     params.push(args.currency);
