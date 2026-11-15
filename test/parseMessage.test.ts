@@ -111,6 +111,18 @@ describe('parseExpenseMessage', () => {
     });
   });
 
+  it('maps public transit aliases to transport category', () => {
+    expect(parseExpenseMessage('bart 5.50 commute')).toMatchObject({
+      amount: 5.5,
+      category: 'transport',
+      note: 'commute',
+    });
+    expect(parseExpenseMessage('public-transit 3.25')).toMatchObject({
+      amount: 3.25,
+      category: 'transport',
+    });
+  });
+
   it('normalizes EMI aliases to the emi category', () => {
     expect(parseExpenseMessage('emi 350 phone')).toMatchObject({
       amount: 350,

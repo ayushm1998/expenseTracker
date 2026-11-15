@@ -151,7 +151,7 @@ function normalizeCategory(cat: string): string {
   // Transport synonyms
   if (c === 'car' || c === 'cab' || c === 'uber' || c === 'lyft' || c === 'ola' || c === 'taxi') return 'transport';
 
-  // Transit systems / stored value
+  // Public transit and transit systems
   if (
     c === 'travel' ||
     c === 'transit' ||
@@ -162,7 +162,7 @@ function normalizeCategory(cat: string): string {
     c === 'muni' ||
     c === 'caltrain'
   )
-    return 'public transit';
+    return 'transport';
 
   // Food synonyms
   if (c === 'restaurant') return 'dining';
