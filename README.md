@@ -2,7 +2,7 @@
 
 This is a simple expense tracker where you can **send a WhatsApp/SMS-like message** (for now via a web form / API), and it will:
 - parse the amount + optional category + note
-- store it in a database (SQLite for local dev, Postgres/Supabase for hosting)
+- store it in Postgres (for local development or hosted deployments)
 - show your expenses + totals in a small web UI
 
 This version is **100% free** to run locally.
@@ -34,7 +34,7 @@ the Vite frontend so stale `dist-client` builds do not mask local UI changes.
 If you host the API, prefer Postgres (e.g., Supabase) by setting `DATABASE_URL`.
 Then you can deploy the Vite frontend on Vercel and point it at your API.
 
-> Note: SQLite (`better-sqlite3`) works great locally, but it’s not a good fit for serverless deployments where filesystem writes aren’t persistent.
+> The active application requires Postgres via `DATABASE_URL`; serverless deployments should use a persistent Postgres provider such as Supabase.
 
 ### Frontend (Vercel)
 This repo includes a Vite vanilla frontend under `client/`.
