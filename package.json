@@ -20,7 +20,6 @@
     "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@vercel/node": "^3.2.22",
     "dotenv": "^16.4.7",
     "express": "^4.19.2",
     "pg": "^8.18.0",

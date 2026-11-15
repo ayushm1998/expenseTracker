@@ -3,11 +3,6 @@
   "installCommand": "npm install",
   "buildCommand": "npm run build:client",
   "outputDirectory": "dist-client",
-  "functions": {
-    "api/index.ts": {
-      "runtime": "@vercel/node@3.2.22"
-    }
-  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.ts" },
     { "source": "/webhook/(.*)", "destination": "/api/index.ts" },
