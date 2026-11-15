@@ -47,10 +47,16 @@ const CATEGORY_WORDS = new Set([
   'housing',
   'mortgage',
 
+  // Financing
+  'emi',
+  'installment',
+  'loan-payment',
+
   // Transport / travel
   'travel',
   'transport',
   'transit',
+  'car',
   'cab',
   'uber',
   'lyft',
@@ -139,8 +145,11 @@ function normalizeCategory(cat: string): string {
   // Housing
   if (c === 'mortgage') return 'housing';
 
+  // Financing
+  if (c === 'installment' || c === 'loan-payment') return 'emi';
+
   // Transport synonyms
-  if (c === 'cab' || c === 'uber' || c === 'lyft' || c === 'ola' || c === 'taxi') return 'transport';
+  if (c === 'car' || c === 'cab' || c === 'uber' || c === 'lyft' || c === 'ola' || c === 'taxi') return 'transport';
 
   // Transit systems / stored value
   if (

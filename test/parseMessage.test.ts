@@ -98,6 +98,32 @@ describe('parseExpenseMessage', () => {
     expect(u?.category).toBe('transport');
   });
 
+  it('maps car rent and car insurance to transport category', () => {
+    expect(parseExpenseMessage('car rent 500')).toMatchObject({
+      amount: 500,
+      category: 'transport',
+      note: 'rent',
+    });
+    expect(parseExpenseMessage('car insurance 120')).toMatchObject({
+      amount: 120,
+      category: 'transport',
+      note: 'insurance',
+    });
+  });
+
+  it('normalizes EMI aliases to the emi category', () => {
+    expect(parseExpenseMessage('emi 350 phone')).toMatchObject({
+      amount: 350,
+      category: 'emi',
+      note: 'phone',
+    });
+    expect(parseExpenseMessage('installment 450 car')).toMatchObject({
+      amount: 450,
+      category: 'emi',
+      note: 'car',
+    });
+  });
+
   it('parses for:<person> token for expenses fully on behalf of someone else', () => {
     const p = parseExpenseMessage('food 20 for:kevin');
     expect(p).toBeTruthy();
